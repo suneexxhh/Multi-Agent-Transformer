@@ -162,6 +162,75 @@ evidence of an improvement in MARL coordination or graph-learning
 accuracy. Until real dependency labels are defensible, the low-rank
 precedence scorer remains **isolated from PPO**.
 
+## Measured cross-stage SMAC results — Run #37919072289
+
+The [restricted private GPU 0 run](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37919072289)
+finished successfully in `new_titans`: one `3m` rollout environment,
+2,000 steps, 1 PPO epoch, no evaluation. Its
+[artifact #11610694060](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37919072289/artifacts/11610694060)
+contains 2 frozen state dicts, 2 NPZ snapshots (4 distinct steps
+per stage), both stage JSON reports, the fixed-state paired-model
+comparison and full execution logs.
+
+All files have prefix
+`MAT_obs_norm_seed1_20261009_184144_790312829`.
+MAT + CUDA unit tests: **71/71 passed** in the GPU job; CPU source
+CI on the same pinned revision: **67 passed, 4 CUDA-only skipped**.
+
+| Statistic | Episode index 1 | Episode index 10 |
+| --- | ---: | ---: |
+| Real observation contexts | 4 | 4 |
+| Original agent count | 3 | 3 |
+| H sampled histories per context | 8 | 8 |
+| Measured directed pairs / 24 possible | 9/24 | 7/24 |
+| Context-level observable pair counts | [3,3,0,3] | [0,3,1,3] |
+| Sample vs teacher-forced logp maximum error | 0.0 | 0.0 |
+| Mean measurable conditional KL | 3.131848913540125e-08 | 2.5313246609925955e-08 |
+| Minimal measured history ESS | 8.0 | 8.0 |
+
+One context in each stage has **zero identifiable directed pairs**
+given its legal masks; its `mean_kl_by_context = null`. This is
+not evidence of missing coordination. A single ordered
+factorization can probe only predecessors, and constraints on
+legal predecessor/successor actions can reduce the coverage further.
+
+### Exact same observations, actions and stored order
+
+The paired-model report fixes the **episode-1 snapshot**, then
+samples 8 joint actions per context from the early policy and
+evaluates both frozen models on the **same** histories and action
+masks. Each policy uses its own Encoder features.
+
+| Fixed-state statistic | Observed result |
+| --- | ---: |
+| Measured original-ID directed pairs | 9 |
+| Mean early KL across those pairs | 3.0458149780088206e-08 |
+| Mean late KL across those pairs | 2.2167039759324325e-08 |
+| Mean absolute per-pair KL change | 1.8340214680279132e-08 |
+| Maximum absolute model parameter difference | 0.004470713436603546 |
+| Maximum joint action logp difference | 0.23173093795776367 |
+| Sample/teacher-forced joint logp discrepancy | 0.0 |
+| Importance-sampling ESS per context | [7.947,7.919,7.949,7.897] |
+| Contexts passing minimum ESS >= 3 | 4/4 |
+| Single paired CPU diagnostic kernel time | 0.113427 s |
+
+**Do not interpret these tiny KL differences as a learned/stable
+dependency graph.** Values around `1e-08` in the present
+`float32` KL reduction are potentially dominated by numerical
+cancellation: the probe computes a difference of action
+log-softmax terms and clamps negative roundoff to zero. Compare
+against a `float64` reference before using magnitudes or
+thresholding purported edges. Two lightly trained policy
+snapshots, eight action histories and one SMAC seed are insufficient
+for scientific claims about convergence, causal links or
+out-of-sample coordination improvements.
+
+The results **do** verify that real MAT model parameters and
+joint-action probabilities changed while frozen-context analysis
+remained consistent. From here, prioritise numerical robustness,
+more realistic checkpoints and multiple trajectories before
+even considering learning the low-rank precedence scorer in PPO.
+
 ## Math and interpretation
 
 1. Under a fixed observation, legal mask and stored permutation,
