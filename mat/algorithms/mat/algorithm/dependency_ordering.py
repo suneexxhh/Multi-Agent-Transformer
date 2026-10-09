@@ -1,83 +1,97 @@
-"""V1 research scaffold: learned pairwise precedence, NOT causal discovery.
+"""Compact V1 pairwise *precedence* prototype, not causal discovery.
 
-This module is intentionally isolated from MAT policy and PPO. The scorer
-is trainable only when a defensible supervision signal is supplied. An
-ordering inferred from a changing scorer must be stored with trajectories
-before it can be used in PPO likelihood evaluation.
+The module is intentionally outside MAT's trainable actor/critic. Do not use
+its untrained scores to control PPO; rollout orders must first be stored and
+the objective for learning precedence must be justified.
 """
+import math
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from torch import nn
+from torch.nn import functional as F
 
 
 class PairwisePrecedenceScorer(nn.Module):
-    """Score a directed precedence relation between current agent observations.
+    """Low-rank, directed precedence preference from per-agent features.
 
-    Returns P[b,i,j] = estimated preference that agent i be decoded before j.
-    This is a *precedence preference*, not evidence of causal action influence.
+    For h_i in R^D, q_i=W_q h_i+b_q, k_i=W_k h_i+b_k in R^r,
+        s_ij = q_i^T k_j / sqrt(r)
+        P(i before j) = sigmoid(s_ij - s_ji).
 
-    The pair network is order-sensitive; antisymmetrization ensures
-    P(i before j) + P(j before i) == 1 up to floating-point precision.
+    Computing one BMM + transpose avoids materializing [B,N,N,3D].
+    P_ij + P_ji = 1 and P_ii = 0.5. A preference is not an
+    interventionally established causal dependency.
     """
 
-    def __init__(self, obs_dim, hidden_dim=64):
+    def __init__(self, obs_dim, hidden_dim=16):
         super().__init__()
         if obs_dim <= 0 or hidden_dim <= 0:
             raise ValueError("obs_dim and hidden_dim must be positive")
         self.obs_dim = obs_dim
-        self.pair_net = nn.Sequential(
-            nn.Linear(3 * obs_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, 1),
-        )
+        self.rank = hidden_dim
+        self.query = nn.Linear(obs_dim, hidden_dim)
+        self.key = nn.Linear(obs_dim, hidden_dim)
 
     def forward(self, obs):
-        """Return pairwise preference tensor [B,N,N] on obs.device."""
-        if obs.ndim != 3 or obs.shape[-1] != self.obs_dim:
-            raise ValueError("expected obs shape [batch, n_agent, obs_dim]")
-        if obs.shape[1] == 0:
-            raise ValueError("at least one agent is required")
-        b, n, d = obs.shape
-        left = obs.unsqueeze(2).expand(b, n, n, d)
-        right = obs.unsqueeze(1).expand(b, n, n, d)
-        pair_input = torch.cat((left, right, left - right), dim=-1)
-        raw = self.pair_net(pair_input).squeeze(-1)
-        preference = torch.sigmoid(raw - raw.transpose(1, 2))
-        return preference
+        """Return [B,N,N] directed preferences using O(B*N^2*r) scores."""
+        if obs.ndim != 3 or obs.shape[-1] != self.obs_dim or obs.shape[1] == 0:
+            raise ValueError("expected obs [B,N,obs_dim] with N > 0")
+        q = self.query(obs)
+        k = self.key(obs)
+        scores = torch.bmm(q, k.transpose(1, 2))
+        margins = (scores - scores.transpose(1, 2)) / math.sqrt(self.rank)
+        return torch.sigmoid(margins)
 
     def order(self, obs):
-        """Return deterministic [B,N] original IDs sorted by expected wins.
+        """Stable Borda ranking; equal preferences preserve original ID.
 
-        Stable sorting resolves ties by original ID. Ranking via pairwise
-        expected wins (Borda) also handles cyclic pairwise preferences.
-        This discrete operation is not differentiable and must not be
-        recomputed from updated network weights during PPO epochs.
+        This is an exact permutation, not a differentiable sampling layer.
+        Do not recompute it during PPO optimization with changed weights.
         """
         with torch.no_grad():
-            preference = self.forward(obs)
-            expected_wins = preference.sum(dim=-1)
-            return torch.argsort(
-                expected_wins, dim=-1, descending=True, stable=True
-            )
+            return self._order_from_preferences(self.forward(obs))
+
+    @staticmethod
+    def _order_from_preferences(preferences):
+        return torch.argsort(preferences.sum(-1), dim=-1,
+                             descending=True, stable=True)
+
+    def precedence_dag(self, obs, threshold=0.7):
+        """Return (adjacency, order), where adjacency[b,i,j] means i -> j.
+
+        Retain only confident edges consistent with the Borda ordering.
+        This guarantees a DAG even with cyclic pairwise preferences,
+        and permits later topological scheduling *after* correctness
+        of parallel conditional action generation is established.
+        """
+        if not 0.5 < threshold < 1.0:
+            raise ValueError("threshold must be strictly between 0.5 and 1")
+        with torch.no_grad():
+            p = self.forward(obs)
+            order = self._order_from_preferences(p)
+            n = order.shape[1]
+            ranks = torch.empty_like(order)
+            ranks.scatter_(1, order, torch.arange(
+                n, device=order.device).expand_as(order))
+            forward_in_rank = ranks.unsqueeze(2) < ranks.unsqueeze(1)
+            return (p > threshold) & forward_in_rank, order
 
     def supervised_loss(self, obs, preference_labels, valid_pairs=None):
-        """BCE loss for *externally provided* directed pairwise labels.
+        """Masked BCE for externally justified pairwise precedence labels.
 
-        Target[b,i,j] represents a supervision label of i preceding j.
-        The diagonal is always excluded. Caller must justify labels and
-        antisymmetry; this method does not derive causal labels.
+        No labels are derived from attention or observations here. This
+        function alone does not provide a supervised learning signal.
         """
-        prediction = self.forward(obs)
-        if preference_labels.shape != prediction.shape:
-            raise ValueError("preference labels must match [B,N,N]")
-        if valid_pairs is not None and valid_pairs.shape != prediction.shape:
-            raise ValueError("valid_pairs must match [B,N,N]")
-        n = prediction.shape[-1]
-        diag_off = ~torch.eye(n, dtype=torch.bool, device=prediction.device)
-        valid = diag_off.unsqueeze(0).expand_as(prediction)
+        p = self.forward(obs)
+        if preference_labels.shape != p.shape:
+            raise ValueError("preference_labels must have shape [B,N,N]")
+        valid = (~torch.eye(p.shape[1], device=p.device, dtype=torch.bool)
+                 .unsqueeze(0).expand_as(p))
         if valid_pairs is not None:
-            valid = valid & valid_pairs.bool()
+            if valid_pairs.shape != p.shape:
+                raise ValueError("valid_pairs must have shape [B,N,N]")
+            valid = valid & valid_pairs.to(device=p.device, dtype=torch.bool)
         if not torch.any(valid):
-            raise ValueError("no valid directed pairs for loss")
-        return F.binary_cross_entropy(prediction[valid], preference_labels[valid])
+            raise ValueError("no valid off-diagonal agent pairs")
+        labels = preference_labels.to(device=p.device, dtype=p.dtype)
+        return F.binary_cross_entropy(p[valid], labels[valid])
