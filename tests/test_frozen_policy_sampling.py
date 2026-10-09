@@ -28,9 +28,10 @@ class BiasedANDDecoder(nn.Module):
     This isolates the effect of a changed action-history distribution.
     """
 
-    def __init__(self, parent_bias):
+    def __init__(self, parent_bias, dependency_strength=4.0):
         super().__init__()
         self.parent_bias = parent_bias
+        self.dependency_strength = dependency_strength
 
     def forward(self, shifted, rep, obs):
         b, n, width = shifted.shape
@@ -41,7 +42,8 @@ class BiasedANDDecoder(nn.Module):
         logits[..., 2] = self.parent_bias * active_parent
         previous_id = F.pad(rep[:, :-1], (0, 0, 1, 0))
         triggered = (previous_id * shifted[..., 3:4]).cumsum(1)
-        logits[..., 1] = 4.0 * triggered[..., 0] * triggered[..., 1] * rep[..., 2]
+        logits[..., 1] = (self.dependency_strength * triggered[..., 0] *
+                          triggered[..., 1] * rep[..., 2])
         return logits
 
 
@@ -138,6 +140,49 @@ class TestFrozenPolicySampling(unittest.TestCase):
                            unweighted[0, 1, 2].item() + 0.07)
         self.assertTrue(valid[:, :, 0, 2].all().item())
         self.assertTrue(valid[:, :, 1, 2].all().item())
+
+    def test_reweighting_old_kl_cannot_repair_changed_decoder_mechanism(self):
+        # Importance weighting can change the history distribution,
+        # but C_q(a) and C_p(a) need not agree at fixed a.
+        # This is a counterexample to treating E_p[C_q] as E_p[C_p].
+        torch.manual_seed(9704)
+        rep, obs, legal, order = self.context(b=1)
+        q = BiasedANDDecoder(-1.0, dependency_strength=4.0).eval()
+        p = BiasedANDDecoder(1.0, dependency_strength=0.0).eval()
+        actions, _, joint_q = sample_frozen_decoder_histories(
+            q, rep, obs, legal, order, 256, max_context_batch=64)
+        _, joint_p = teacher_forced_history_log_probs(
+            p, rep, obs, legal, order, actions)
+        weights, _ = self_normalized_policy_weights(joint_p, joint_q)
+        q_score, q_valid = probe_action_histories(
+            q, rep, obs, actions, legal, order, max_context_batch=64)
+        p_score, p_valid = probe_action_histories(
+            p, rep, obs, actions, legal, order, max_context_batch=64)
+        reweighted_old, _, _ = expected_dependency(q_score, q_valid, weights)
+        evaluated_target, _, _ = expected_dependency(p_score, p_valid, weights)
+        self.assertGreater(reweighted_old[0, 0, 2].item(), 0.02)
+        self.assertAlmostEqual(evaluated_target[0, 0, 2].item(), 0, places=7)
+        self.assertTrue(torch.equal(q_valid, p_valid))
+        print("FROZEN_SHIFT_MECHANISM "
+              "reweight_Cq_not_equal_target_Cp=PASS", flush=True)
+
+    def test_ess_exposes_extreme_distribution_shift(self):
+        rep, obs, legal, order = self.context(b=1)
+        torch.manual_seed(9705)
+        q = BiasedANDDecoder(-3.0).eval()
+        p = BiasedANDDecoder(3.0).eval()
+        actions, _, joint_q = sample_frozen_decoder_histories(
+            q, rep, obs, legal, order, 1800, max_context_batch=128)
+        _, joint_p = teacher_forced_history_log_probs(
+            p, rep, obs, legal, order, actions)
+        weights, ess = self_normalized_policy_weights(joint_p, joint_q)
+        self.assertTrue(torch.allclose(weights.sum(0), torch.ones(1)))
+        self.assertLess(ess.item(), 180.0)
+        # Severe shift can leave only a few high-weight events.
+        # Such estimates require abstention or new target-policy data,
+        # not a claim of reliable calibrated action dependence.
+        print(f"FROZEN_EXTREME_SHIFT ESS={ess.item():.1f} "
+              "original_samples=1800", flush=True)
 
     def test_failure_modes_and_eval_guards(self):
         rep, obs, legal, order = self.context()
