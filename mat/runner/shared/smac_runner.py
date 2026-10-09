@@ -27,6 +27,18 @@ class SMACRunner(Runner):
         last_battles_won = np.zeros(self.n_rollout_threads, dtype=np.float32)
 
         for episode in range(episodes):
+            # Opt-in: inspect two training stages, each with four
+            # distinct pre-action observations and ONE shared checkpoint.
+            # Episodes are indices, so snapshots follow 100 and 1000
+            # previous training steps in the single-env smoke setup.
+            capture = None
+            if (episode in (1, 10) and
+                    getattr(self.all_args, "decoder_diag_capture_dir", None)):
+                if self.buffer.agent_orders is None:
+                    raise ValueError("diagnostic capture requires --store_agent_orders")
+                from research.dependency_decoder.snapshot_capture import MultiContextCapture
+                capture = MultiContextCapture(steps=(0, 10, 20, 30))
+
             if self.use_linear_lr_decay:
                 self.trainer.policy.lr_decay(episode, episodes)
 
@@ -38,26 +50,24 @@ class SMACRunner(Runner):
                 else:
                     values, actions, action_log_probs, rnn_states, rnn_states_critic = collection
                     
-                # Save a single aligned, pre-action rollout context and
-                # matching frozen weights, only when explicitly enabled.
-                if (episode == 1 and step == 0 and
-                        getattr(self.all_args, "decoder_diag_capture_dir", None)):
-                    if self.buffer.agent_orders is None:
-                        raise ValueError("diagnostic capture requires --store_agent_orders")
-                    from research.dependency_decoder.snapshot_capture import (
-                        save_snapshot_and_checkpoint,
-                    )
-                    diag_id = getattr(self.all_args, "decoder_diag_capture_id", None)
-                    if not diag_id:
-                        raise ValueError("diagnostic capture requires --decoder_diag_capture_id")
-                    snap, checkpoint = save_snapshot_and_checkpoint(
-                        self.trainer.policy.transformer,
-                        self.buffer.obs[step].copy(),
-                        self.buffer.available_actions[step].copy(),
-                        agent_orders, self.all_args.decoder_diag_capture_dir,
-                        diag_id)
-                    print(f"MAT_DECODER_DIAG_SNAPSHOT={snap}")
-                    print(f"MAT_DECODER_DIAG_CHECKPOINT={checkpoint}")
+                if capture is not None and capture.observe(
+                        step, self.buffer.obs[step],
+                        self.buffer.available_actions[step], agent_orders):
+                    if capture.complete:
+                        from research.dependency_decoder.snapshot_capture import (
+                            save_snapshot_and_checkpoint,
+                        )
+                        diag_id = getattr(self.all_args, "decoder_diag_capture_id", None)
+                        if not diag_id:
+                            raise ValueError("diagnostic capture requires --decoder_diag_capture_id")
+                        # Snapshot filenames are stage-specific. All four
+                        # observation contexts share current PPO parameters.
+                        snap, checkpoint = capture.save(
+                            self.trainer.policy.transformer,
+                            self.all_args.decoder_diag_capture_dir,
+                            f"{diag_id}_ep{episode:04d}", episode)
+                        print(f"MAT_DECODER_DIAG_SNAPSHOT={snap}")
+                        print(f"MAT_DECODER_DIAG_CHECKPOINT={checkpoint}")
 
                 # Obser reward and next obs
                 obs, share_obs, rewards, dones, infos, available_actions = self.envs.step(actions)
