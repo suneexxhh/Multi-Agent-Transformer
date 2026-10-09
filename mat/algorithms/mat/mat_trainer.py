@@ -42,6 +42,10 @@ class MATTrainer:
         self._use_value_active_masks = args.use_value_active_masks
         self._use_policy_active_masks = args.use_policy_active_masks
         self.dec_actor = args.dec_actor
+        self.learned_orders = getattr(args, "agent_order_mode", "identity") == "learned"
+        self.order_loss_coef = getattr(args, "order_loss_coef", 0.1)
+        if self.learned_orders and self.order_loss_coef <= 0:
+            raise ValueError("learned-order PPO requires positive order_loss_coef")
         
         if self._use_valuenorm:
             self.value_normalizer = ValueNorm(1, device=self.device)
@@ -103,12 +107,17 @@ class MATTrainer:
         :return actor_grad_norm: (torch.Tensor) gradient norm from actor update.
         :return imp_weights: (torch.Tensor) importance sampling weights.
         """
-        if len(sample) == 13:
+        old_order_logp = None
+        if len(sample) == 14:
+            *standard_sample, stored_agent_orders, old_order_logp = sample
+        elif len(sample) == 13:
             *standard_sample, stored_agent_orders = sample
         elif len(sample) == 12:
             standard_sample, stored_agent_orders = sample, None
         else:
-            raise ValueError("expected 12 fields, or 13 with rollout agent order")
+            raise ValueError("expected 12 standard, 13 saved order or 14 learned-order fields")
+        if self.learned_orders != (old_order_logp is not None):
+            raise ValueError("learned PPO requires saved permutation and old log probability")
         share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch, \
         value_preds_batch, return_batch, masks_batch, active_masks_batch, old_action_log_probs_batch, \
         adv_targ, available_actions_batch = standard_sample
@@ -120,15 +129,15 @@ class MATTrainer:
         active_masks_batch = check(active_masks_batch).to(**self.tpdv)
 
         # Reshape to do in a single forward pass for all steps
-        values, action_log_probs, dist_entropy = self.policy.evaluate_actions(share_obs_batch,
-                                                                              obs_batch, 
-                                                                              rnn_states_batch, 
-                                                                              rnn_states_critic_batch, 
-                                                                              actions_batch, 
-                                                                              masks_batch, 
-                                                                              available_actions_batch,
-                                                                              active_masks_batch,
-                                                                              agent_order=stored_agent_orders)
+        evaluation = self.policy.evaluate_actions(
+            share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch,
+            actions_batch, masks_batch, available_actions_batch, active_masks_batch,
+            agent_order=stored_agent_orders,
+            **({"return_order_log_prob": True} if self.learned_orders else {}))
+        if self.learned_orders:
+            values, action_log_probs, dist_entropy, new_order_logp = evaluation
+        else:
+            values, action_log_probs, dist_entropy = evaluation
         # actor update
         imp_weights = torch.exp(action_log_probs - old_action_log_probs_batch)
 
@@ -146,6 +155,27 @@ class MATTrainer:
         value_loss = self.cal_value_loss(values, value_preds_batch, return_batch, active_masks_batch)
 
         loss = policy_loss - dist_entropy * self.entropy_coef + value_loss * self.value_loss_coef
+        self.last_order_policy_loss = None
+        if self.learned_orders:
+            old_order_logp = check(old_order_logp).to(**self.tpdv)
+            B = old_order_logp.shape[0]
+            if (new_order_logp.shape != old_order_logp.shape or
+                    adv_targ.shape[0] != B * self.num_agents):
+                raise ValueError("joint order sample has inconsistent batch shape")
+            # One active-agent normalized advantage per joint team permutation.
+            adv = adv_targ.reshape(B, self.num_agents, -1).mean(-1)
+            alive = active_masks_batch.reshape(B, self.num_agents, -1).mean(-1)
+            team_adv = (adv * alive).sum(-1, keepdim=True) / alive.sum(
+                -1, keepdim=True).clamp_min(1.0)
+            ratio = torch.exp(new_order_logp - old_order_logp)
+            surrogate_1 = ratio * team_adv
+            surrogate_2 = torch.clamp(ratio, 1. - self.clip_param,
+                                     1. + self.clip_param) * team_adv
+            order_loss = -torch.minimum(surrogate_1, surrogate_2).mean()
+            # Factor-wise clipping: action factors and permutation factor are
+            # clipped separately; not an exact joint-action PPO ratio.
+            loss = loss + self.order_loss_coef * order_loss
+            self.last_order_policy_loss = order_loss.detach().item()
 
         self.policy.optimizer.zero_grad()
         loss.backward()
@@ -182,6 +212,8 @@ class MATTrainer:
         train_info['actor_grad_norm'] = 0
         train_info['critic_grad_norm'] = 0
         train_info['ratio'] = 0
+        if self.learned_orders:
+            train_info['order_policy_loss'] = 0
 
         for _ in range(self.ppo_epoch):
             data_generator = buffer.feed_forward_generator_transformer(advantages, self.num_mini_batch)
@@ -197,6 +229,8 @@ class MATTrainer:
                 train_info['actor_grad_norm'] += actor_grad_norm
                 train_info['critic_grad_norm'] += critic_grad_norm
                 train_info['ratio'] += imp_weights.mean()
+                if self.learned_orders:
+                    train_info['order_policy_loss'] += self.last_order_policy_loss
 
         num_updates = self.ppo_epoch * self.num_mini_batch
 

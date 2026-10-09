@@ -54,7 +54,10 @@ class SMACRunner(Runner):
             for step in range(self.episode_length):
                 # Sample actions
                 collection = self.collect(step)
-                if self.buffer.agent_orders is not None:
+                if self.buffer.agent_order_log_probs is not None:
+                    (values, actions, action_log_probs, rnn_states, rnn_states_critic,
+                     agent_orders, order_log_probs) = collection
+                elif self.buffer.agent_orders is not None:
                     values, actions, action_log_probs, rnn_states, rnn_states_critic, agent_orders = collection
                 else:
                     values, actions, action_log_probs, rnn_states, rnn_states_critic = collection
@@ -85,6 +88,8 @@ class SMACRunner(Runner):
                         values, actions, action_log_probs, rnn_states, rnn_states_critic)
                 if self.buffer.agent_orders is not None:
                     data += (agent_orders,)
+                    if self.buffer.agent_order_log_probs is not None:
+                        data += (order_log_probs,)
                 
                 # insert data into buffer
                 self.insert(data)
@@ -165,8 +170,12 @@ class SMACRunner(Runner):
             np.concatenate(self.buffer.rnn_states_critic[step]),
             np.concatenate(self.buffer.masks[step]),
             np.concatenate(self.buffer.available_actions[step]),
-            return_agent_order=self.buffer.agent_orders is not None)
-        if self.buffer.agent_orders is not None:
+            return_agent_order=self.buffer.agent_orders is not None,
+            return_order_log_prob=self.buffer.agent_order_log_probs is not None)
+        if self.buffer.agent_order_log_probs is not None:
+            (value, action, action_log_prob, rnn_state, rnn_state_critic,
+             stored_order, stored_order_lp) = collected
+        elif self.buffer.agent_orders is not None:
             value, action, action_log_prob, rnn_state, rnn_state_critic, stored_order = collected
         else:
             value, action, action_log_prob, rnn_state, rnn_state_critic = collected
@@ -181,14 +190,20 @@ class SMACRunner(Runner):
             orders = _t2n(stored_order)
             if orders.shape != (self.n_rollout_threads, self.num_agents):
                 raise ValueError("unexpected per-environment agent order shape")
+            if self.buffer.agent_order_log_probs is not None:
+                return (values, actions, action_log_probs, rnn_states, rnn_states_critic,
+                        orders, _t2n(stored_order_lp))
             return values, actions, action_log_probs, rnn_states, rnn_states_critic, orders
         return values, actions, action_log_probs, rnn_states, rnn_states_critic
 
     def insert(self, data):
-        if len(data) == 12:
+        if len(data) == 13:
+            *usual_data, agent_orders, order_log_probs = data
+        elif len(data) == 12:
             *usual_data, agent_orders = data
+            order_log_probs = None
         elif len(data) == 11:
-            usual_data, agent_orders = data, None
+            usual_data, agent_orders, order_log_probs = data, None, None
         else:
             raise ValueError("unexpected SMAC rollout tuple")
         obs, share_obs, rewards, dones, infos, available_actions, \
@@ -213,7 +228,8 @@ class SMACRunner(Runner):
 
         self.buffer.insert(share_obs, obs, rnn_states, rnn_states_critic,
                            actions, action_log_probs, values, rewards, masks, bad_masks,
-                           active_masks, available_actions, agent_orders=agent_orders)
+                           active_masks, available_actions, agent_orders=agent_orders,
+                           agent_order_log_probs=order_log_probs)
 
     def log_train(self, train_infos, total_num_steps):
         train_infos["average_step_rewards"] = np.mean(self.buffer.rewards)

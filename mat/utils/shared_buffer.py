@@ -44,6 +44,9 @@ class SharedReplayBuffer(object):
         self.num_agents = num_agents
         self.env_name = env_name
         self.store_agent_orders = getattr(args, "store_agent_orders", False)
+        self.learned_orders = getattr(args, "agent_order_mode", "identity") == "learned"
+        if self.learned_orders and not self.store_agent_orders:
+            raise ValueError("learned ordering requires --store_agent_orders")
         if self.store_agent_orders and (env_name != "StarCraft2" or self.algo != "mat"):
             raise ValueError("stored-order PPO path is enabled only for SMAC MAT")
 
@@ -94,11 +97,15 @@ class SharedReplayBuffer(object):
             np.empty((self.episode_length, self.n_rollout_threads, num_agents), dtype=np.int64)
             if self.store_agent_orders else None
         )
+        self.agent_order_log_probs = (
+            np.zeros((self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
+            if self.learned_orders else None
+        )
         self.step = 0
 
     def insert(self, share_obs, obs, rnn_states_actor, rnn_states_critic, actions, action_log_probs,
                value_preds, rewards, masks, bad_masks=None, active_masks=None, available_actions=None,
-               agent_orders=None):
+               agent_orders=None, agent_order_log_probs=None):
         """
         Insert data into the buffer.
         :param share_obs: (argparse.Namespace) arguments containing relevant model, policy, and env information.
@@ -130,6 +137,16 @@ class SharedReplayBuffer(object):
             self.agent_orders[self.step] = orders
         elif agent_orders is not None:
             raise ValueError("agent_orders provided but --store_agent_orders is disabled")
+        if self.agent_order_log_probs is not None:
+            if agent_order_log_probs is None:
+                raise ValueError("learned PPO requires stored old order likelihoods")
+            old_logp = np.asarray(agent_order_log_probs)
+            if (old_logp.shape != (self.n_rollout_threads, 1) or
+                    not np.isfinite(old_logp).all()):
+                raise ValueError("order log probabilities must be finite [n_envs,1]")
+            self.agent_order_log_probs[self.step] = old_logp
+        elif agent_order_log_probs is not None:
+            raise ValueError("unexpected order likelihood in fixed-order run")
         self.actions[self.step] = actions.copy()
         self.action_log_probs[self.step] = action_log_probs.copy()
         self.value_preds[self.step] = value_preds.copy()
@@ -283,6 +300,8 @@ class SharedReplayBuffer(object):
         # One stored original-agent permutation per time/environment sample.
         agent_orders = (self.agent_orders.reshape(batch_size, num_agents)
                         if self.agent_orders is not None else None)
+        old_order_logps = (self.agent_order_log_probs.reshape(batch_size, 1)
+                           if self.agent_order_log_probs is not None else None)
         advantages = advantages[rows, cols]
 
         for indices in sampler:
@@ -311,6 +330,7 @@ class SharedReplayBuffer(object):
                       active_masks_batch, old_action_log_probs_batch, adv_targ,
                       available_actions_batch)
             if agent_orders is not None:
-                yield sample + (agent_orders[indices].copy(),)
-            else:
-                yield sample
+                sample = sample + (agent_orders[indices].copy(),)
+                if old_order_logps is not None:
+                    sample = sample + (old_order_logps[indices].copy(),)
+            yield sample

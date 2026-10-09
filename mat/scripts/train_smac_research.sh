@@ -15,6 +15,9 @@ DRY_RUN="${DRY_RUN:-0}"
 EXP_TAG="${EXP_TAG:-decoder_v0_baseline}"
 AGENT_ORDER_MODE="${AGENT_ORDER_MODE:-identity}"
 AGENT_ORDER_SEED="${AGENT_ORDER_SEED:-1}"
+ORDER_HIDDEN_DIM="${ORDER_HIDDEN_DIM:-64}"
+ORDER_TEMPERATURE="${ORDER_TEMPERATURE:-1.0}"
+ORDER_LOSS_COEF="${ORDER_LOSS_COEF:-0.1}"
 # For SC2 startup/resource diagnosis use e.g. N_ROLLOUT_THREADS=2
 # and USE_EVAL=0. Full baseline stays at 32 threads + evaluation by default.
 N_ROLLOUT_THREADS="${N_ROLLOUT_THREADS:-32}"
@@ -53,9 +56,20 @@ if [[ "$DECODER_DIAG_CAPTURE" == "1" && ! "$DECODER_DIAG_CAPTURE_EPISODES" =~ ^[
   exit 2
 fi
 case "$AGENT_ORDER_MODE" in
-  identity|random_fixed|obs_norm) ;;
+  identity|random_fixed|obs_norm|learned) ;;
   *) echo "Unknown AGENT_ORDER_MODE: $AGENT_ORDER_MODE" >&2; exit 2 ;;
 esac
+if [[ "$AGENT_ORDER_MODE" == "learned" ]]; then
+  if [[ "$STORE_AGENT_ORDERS" != "1" ]]; then
+    echo "learned ordering requires STORE_AGENT_ORDERS=1 for PPO replay" >&2
+    exit 2
+  fi
+  # Only the user's nine preapproved maps are eligible for NEW learned runs.
+  case "$MAP" in
+    1c3s5z|3s5z|5m_vs_6m|8m_vs_9m|10m_vs_11m|6h_vs_8z|3s5z_vs_3s6z|MMM2|27m_vs_30m) ;;
+    *) echo "learned ordering: map $MAP is outside the nine approved maps" >&2; exit 2 ;;
+  esac
+fi
 
 # Historical MAT-MSA scripts used different map-specific training budgets.
 # These are references for matched baselines, not proven-optimal hyperparameters.
@@ -161,6 +175,11 @@ if [[ "$USE_EVAL" == "1" ]]; then
 fi
 if [[ "$STORE_AGENT_ORDERS" == "1" ]]; then
   args+=(--store_agent_orders)
+fi
+if [[ "$AGENT_ORDER_MODE" == "learned" ]]; then
+  args+=(--order_hidden_dim "$ORDER_HIDDEN_DIM")
+  args+=(--order_temperature "$ORDER_TEMPERATURE")
+  args+=(--order_loss_coef "$ORDER_LOSS_COEF")
 fi
 if [[ "$DECODER_DIAG_CAPTURE" == "1" ]]; then
   args+=(--decoder_diag_capture_dir "$LOG_DIR")
