@@ -19,6 +19,19 @@ dry="$(DRY_RUN=1 AGENT_ORDER_MODE=obs_norm bash "$launcher" 3m 0 7)"
 [[ "$dry" == *"DRY_RUN=1: command printed; no training started."* ]]
 grep -Eq 'log_file=.*/mat/scripts/logs/MAT_obs_norm_seed7_[0-9]{8}_[0-9]{6}_[0-9]{9}\.log' <<< "$dry"
 
+# The diagnostic export is explicitly opt-in and must carry stored orders.
+dry_diag="$(DRY_RUN=1 STORE_AGENT_ORDERS=1 DECODER_DIAG_CAPTURE=1 \
+  AGENT_ORDER_MODE=obs_norm bash "$launcher" 3m 0 7)"
+grep -Fq 'decoder_diag_capture=1' <<< "$dry_diag"
+grep -Fq ' --store_agent_orders ' <<< "$dry_diag"
+grep -Fq ' --decoder_diag_capture_dir ' <<< "$dry_diag"
+grep -Fq ' --decoder_diag_capture_id MAT_obs_norm_seed7_' <<< "$dry_diag"
+if DRY_RUN=1 DECODER_DIAG_CAPTURE=1 STORE_AGENT_ORDERS=0 \
+   bash "$launcher" 3m 0 7 > /dev/null 2>&1; then
+  echo "ERROR: must reject capture without saved rollout order" >&2
+  exit 1
+fi
+
 mkdir -p "$work/fake_env/bin"
 cat > "$work/conda.sh" <<'FAKE_CONDA'
 conda() {
