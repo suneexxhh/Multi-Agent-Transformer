@@ -603,17 +603,58 @@ there are no extra Decoder passes.
 | 90,000 | 0.3730016350746155 | 0.06606321036815643 |
 
 The low-TV 90k model has **much lower conditional joint-action
-entropy** than the initial model at these fixed observations.
-This is consistent with a late policy that selects a narrow set
-of legal actions. It offers a plausible explanation for some
-of the nonmonotonic KL/TV behavior, but neither proves causal
-forgetting of useful dependencies nor establishes that this
-near-determinism wins games. A separate **native,
-non-training SMAC evaluation** of selected frozen checkpoints
-is required before judging decision quality. The
-[bounded evaluation workflow](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37928088237)
-has been requested; its success and quantitative results must
-be verified independently.
+entropy** than the initial model at these fixed observations,
+consistent with a narrow distribution over legal actions. This
+could explain part of the nonmonotonic KL/TV pattern, but neither
+proves causal forgetting nor establishes cooperative return.
+The native frozen evaluation described below is now completed.
+
+## SMAC 3m deterministic native evaluation on frozen checkpoints (completed)
+
+The read-only [GPU 0 Run #37928312446](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37928312446)
+**completed successfully** with [eval logs and JSON artifact #11614684653](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37928312446/artifacts/11614684653).
+It restored four archived `obs_norm` MAT checkpoints, verified the
+same 3m map and evaluation seed 1, and called the unmodified
+`SMACRunner.eval()` / deterministic `TransformerPolicy.act()`.
+Every model was evaluated for 32 SMAC episodes. It performed
+**zero optimizer updates** and never called `runner.run()` or
+PPO training.
+
+| Checkpoint environment steps | SMAC wins / 32 | Win rate |
+| ---: | ---: | ---: |
+| 0 | 0 / 32 | 0% |
+| 10,000 | 25 / 32 | 78.125% |
+| 50,000 | 20 / 32 | 62.5% |
+| 90,000 | 24 / 32 | 75% |
+
+The native win rate establishes that the low-entropy 90k frozen
+policy can nevertheless win 24 out of 32 games under this specific
+evaluation. Therefore **small conditional action KL/TV and low
+joint action entropy do not, by themselves, establish policy
+degeneration**. Conversely, high KL/TV is neither necessary nor
+sufficient for higher win rate. The training trajectory was
+nonmonotonic in these sparse checkpoints.
+
+This is only ONE training seed and 32 evaluation episodes per
+model, with potentially correlated deterministic evaluation
+trajectories. No uncertainty across independent training seeds
+has been estimated, and winning 25 vs 24 games does not establish
+a statistically significant ranking. Evaluation without a
+matching original MAT `identity` agent-order baseline cannot
+justify an `obs_norm` or learned-dependence sorting improvement.
+The [matched identity baseline workflow](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37928862199)
+has been requested using the same seed, code revision, optimizer
+budget and GPU0 resource constraints. Its actual conclusion
+must be checked separately: a submitted or running experiment
+is not itself a successful result.
+
+**Algorithmic implication:** preserve V1 pairwise scorer in
+offline-only diagnostic mode, and never derive preference
+supervision simply by thresholding KL/TV, entropy or win rate.
+The correct benefit/risk tradeoff must be tested in held-out
+rollouts and matched identity/learned-order ablations. Still no
+Decoder parameters or PPO losses have been changed by these
+diagnostics.
 
 ## Math and interpretation
 
