@@ -95,6 +95,40 @@ class TestHeldoutOracleBenchmark(unittest.TestCase):
         self.assertGreater(test_stats["recall"], 0.70)
         self.assertGreater(test_stats["precision"], 0.75)
         self.assertGreater(threshold, 0.5)
+        print(
+            "HELDOUT_SCORER n_train=4 n_test=5 "
+            f"threshold={threshold:.5f} "
+            f"cal_FPR={val_stats['false_positive_rate']:.5f} "
+            f"test_FPR={test_stats['false_positive_rate']:.5f} "
+            f"test_precision={test_stats['precision']:.5f} "
+            f"test_recall={test_stats['recall']:.5f} "
+            f"test_TP={test_stats['tp']} test_FP={test_stats['fp']}",
+            flush=True)
+
+
+    def test_rule_reversal_is_explicit_negative_control(self):
+        # A ranker trained on larger-trait-first cannot be expected to
+        # generalize to the OPPOSITE structural rule; correct held-out
+        # scores on the original rule do not establish causal discovery.
+        torch.manual_seed(8303)
+        traits = torch.rand(20, 5, 1) * 2 - 1
+        reversed_graph = make_priority_graph(-traits)
+        scorer = PairwisePrecedenceScorer(obs_dim=1, hidden_dim=1)
+        with torch.no_grad():
+            scorer.query.weight.fill_(1)
+            scorer.query.bias.zero_()
+            scorer.key.weight.zero_()
+            scorer.key.bias.fill_(1)
+            p = scorer(traits)
+            wrong_rule = scorer_graph_metrics(p, reversed_graph, 0.55)
+        self.assertTrue(reversed_graph.any().item())
+        self.assertEqual(wrong_rule["recall"], 0.0)
+        self.assertGreater(wrong_rule["false_positive_rate"], 0.0)
+        print(
+            "OOD_REVERSED_RULE negative_control "
+            f"recall={wrong_rule['recall']:.5f} "
+            f"FPR={wrong_rule['false_positive_rate']:.5f}",
+            flush=True)
 
     def test_metrics_distinguish_false_alarm_from_abstention(self):
         traits = torch.tensor([[[1.], [0.], [-1.]]])
