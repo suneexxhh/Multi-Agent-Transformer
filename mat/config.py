@@ -301,6 +301,10 @@ def get_config():
     parser.add_argument("--store_agent_orders", action="store_true", default=False,
                         help="V1 infrastructure: store per-rollout MAT agent permutations for PPO; "
                              "SMAC only, preserves V0 behavior when disabled")
+    parser.add_argument("--decoder_diag_capture_dir", type=str, default=None,
+                        help="Opt-in SMAC diagnostic: save one pre-update checkpoint and observation snapshot")
+    parser.add_argument("--decoder_diag_capture_id", type=str, default=None,
+                        help="Safe identifier used to name the two snapshot files")
 
     # add for online multi-task
     parser.add_argument("--train_maps", type=str, nargs='+', default=None)
