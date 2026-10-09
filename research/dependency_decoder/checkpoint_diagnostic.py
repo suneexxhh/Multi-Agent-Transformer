@@ -47,6 +47,22 @@ def _load_snapshot(path):
             torch.from_numpy(order))
 
 
+
+def load_frozen_model(checkpoint, n_agent, obs_dim, act_dim,
+                      n_block, n_embd, n_head):
+    """Strict weights-only CPU restore; shared by single/stage comparisons."""
+    if min(n_agent, obs_dim, act_dim, n_block, n_embd, n_head) < 1:
+        raise ValueError("model dimensions must be positive")
+    model = MultiAgentTransformer(
+        state_dim=37, obs_dim=obs_dim, action_dim=act_dim, n_agent=n_agent,
+        n_block=n_block, n_embd=n_embd, n_head=n_head,
+        device=torch.device("cpu"), action_type="Discrete",
+        agent_order_mode="identity", encode_state=False)
+    state_dict = torch.load(str(checkpoint), map_location="cpu", weights_only=True)
+    model.load_state_dict(state_dict, strict=True)
+    model.eval()
+    return model
+
 @torch.no_grad()
 def run_diagnostic(checkpoint, snapshot, n_block, n_embd, n_head,
                    num_histories=16, max_context_batch=8,
@@ -62,15 +78,8 @@ def run_diagnostic(checkpoint, snapshot, n_block, n_embd, n_head,
     obs, legal, order = _load_snapshot(snapshot)
     b, n, obs_dim = obs.shape
     act_dim = legal.shape[-1]
-    model = MultiAgentTransformer(
-        state_dim=37, obs_dim=obs_dim, action_dim=act_dim, n_agent=n,
-        n_block=n_block, n_embd=n_embd, n_head=n_head,
-        device=torch.device("cpu"), action_type="Discrete",
-        agent_order_mode="identity", encode_state=False,
-    )
-    state_dict = torch.load(str(checkpoint), map_location="cpu", weights_only=True)
-    model.load_state_dict(state_dict, strict=True)
-    model.eval()
+    model = load_frozen_model(
+        checkpoint, n, obs_dim, act_dim, n_block, n_embd, n_head)
     state = torch.zeros((b, n, 37), dtype=torch.float32)
     _, rep = model.encoder(state, obs)
     start = time.perf_counter()
