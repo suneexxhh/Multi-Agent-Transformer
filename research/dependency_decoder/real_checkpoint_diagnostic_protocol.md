@@ -248,14 +248,66 @@ at `epsilon=1e-4`, whose exact value is
 `log(cosh(epsilon/2)) ~= 1.25e-9`. This distinguishes genuine
 small positive KL from roundoff-triggered zero/negative values.
 
-**The earlier GPU artifact numbers have not been recomputed under
-the new double-precision reduction.** The artifact remains a
-correct log-probability/coverage/functionality validation, but do
-not cite the near-zero KL as a calibrated edge strength until
-rerunning that archived checkpoint data offline with the corrected
-probe and adequate action-history samples. In particular, do not
-promote the untrained, short-checkpoint KL to a supervised ranking
-label.
+**The previous GPU artifact has now been recomputed with the
+double-precision reduction.** Its historical float32 values are kept
+in the tables above for reproducibility, and should NOT be reported
+as accurate dependency magnitudes. See the verified CPU-only replay
+below. Neither historical nor corrected short-checkpoint KL values
+support a supervised agent-order training label.
+
+## Archived real SMAC replay with float64 KL (completed)
+
+[Private CPU-only replay #37920607495](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37920607495)
+**succeeded** on 2026-10-09 without starting StarCraft II or using
+any GPU. Its [artifact #11611408127](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37920607495/artifacts/11611408127)
+contains six new JSONs/logs plus a self-contained numerical comparison.
+The **original frozen weights and snapshots were not altered**.
+
+The CPU workflow checked out MAT source commit
+`bc28fa9e7a0c98ba8537941825d48081c705c796` (fixed
+decoder logits, stable `float64` KL reduction), downloaded source
+run `37919072289`'s exact private Artifact, and replayed **both**
+real checkpoint stages and their matched-state comparison.
+
+The H=8 replay verified unchanged observable-pair masks, saved
+observation context provenance, equal original MAT joint-action
+mean log probabilities, and identical importance-sampling ESS.
+Thus the change between historical H=8 and recomputed H=8 KL
+reflects the numerical reduction, not a new training run or
+deliberately changed behavior-policy histories.
+
+| Real-data diagnostic | Historical float32 H=8 | New float64 H=8 | New float64 H=64 |
+| --- | ---: | ---: | ---: |
+| Episode 1 mean measurable conditional KL | 3.131848913540125e-08 | 1.8754301497198034e-13 | 1.934263838508643e-13 |
+| Episode 10 mean measurable conditional KL | 2.5313246609925955e-08 | 1.0353048713468427e-12 | 9.97297622089277e-13 |
+| Fixed-state mean absolute pair KL change | 1.8340214680279132e-08 | 7.232883454492967e-13 | 7.132018500083381e-13 |
+
+For H=64, effective importance sample sizes on the four matched
+observations were approximately `[63.55, 63.49, 63.68, 63.41]`.
+The H=8 per-context observability counts remained `[3,3,0,3]`
+for episode 1 and `[0,3,1,3]` for episode 10. Histories excluded
+for action/target legality are never treated as independent edges.
+
+**Interpretation.** In this unusually early MAT checkpoint, the
+original float32 KL results were overwhelmingly dominated by
+cancellation/rounding from subtracting conditional log-probabilities
+near equality. The output logits themselves are still produced by
+the original float32 decoder; casting logits before double-precision
+`log_softmax` cannot recover information already lost during model
+forward. Yet the robust reduction removes a large spurious
+`10^-8` background and reveals extremely weak measurable action
+sensitivity `~10^-13 to 10^-12`. That is **not** proof of no
+structural agent dependency, no cooperation in the environment,
+or a converged learned policy. In particular, we have no
+bidirectionally identified labels in these one-order snapshots.
+
+**Decision:** do not train the low-rank precedence scorer on these
+near-zero pseudo-labels; freeze V0/V1.1 rollout and PPO behavior.
+Subsequent substantive experiments require sufficiently trained
+checkpoints, multiple independently collected trajectories, a
+predeclared numerical noise floor and confidence criteria, and
+matched-seed win-rate/compute comparisons if graph ordering is
+eventually enabled.
 
 ## Math and interpretation
 
