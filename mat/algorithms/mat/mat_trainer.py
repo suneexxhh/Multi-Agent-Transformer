@@ -103,9 +103,15 @@ class MATTrainer:
         :return actor_grad_norm: (torch.Tensor) gradient norm from actor update.
         :return imp_weights: (torch.Tensor) importance sampling weights.
         """
+        if len(sample) == 13:
+            *standard_sample, stored_agent_orders = sample
+        elif len(sample) == 12:
+            standard_sample, stored_agent_orders = sample, None
+        else:
+            raise ValueError("expected 12 fields, or 13 with rollout agent order")
         share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch, \
         value_preds_batch, return_batch, masks_batch, active_masks_batch, old_action_log_probs_batch, \
-        adv_targ, available_actions_batch = sample
+        adv_targ, available_actions_batch = standard_sample
 
         old_action_log_probs_batch = check(old_action_log_probs_batch).to(**self.tpdv)
         adv_targ = check(adv_targ).to(**self.tpdv)
@@ -121,7 +127,8 @@ class MATTrainer:
                                                                               actions_batch, 
                                                                               masks_batch, 
                                                                               available_actions_batch,
-                                                                              active_masks_batch)
+                                                                              active_masks_batch,
+                                                                              agent_order=stored_agent_orders)
         # actor update
         imp_weights = torch.exp(action_log_probs - old_action_log_probs_batch)
 
