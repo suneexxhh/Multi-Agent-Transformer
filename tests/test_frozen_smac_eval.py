@@ -43,6 +43,12 @@ class TestFrozenSmacEval(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             evaluate_frozen_checkpoint("/file/that/does/not/exist.pt",
                                        map_name="3s5z", agent_order_mode="obs_norm")
+        for map_name in ("3s5z_vs_3s6z", "6h_vs_8z"):
+            with self.subTest(map=map_name):
+                with self.assertRaises(FileNotFoundError):
+                    evaluate_frozen_checkpoint(
+                        "/file/that/does/not/exist.pt", map_name=map_name,
+                        agent_order_mode="identity")
         with self.assertRaises(ValueError):
             evaluate_frozen_checkpoint("/file/that/does/not/exist.pt",
                                        map_name="invalid_map")
