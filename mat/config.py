@@ -304,7 +304,9 @@ def get_config():
     parser.add_argument("--decoder_diag_capture_dir", type=str, default=None,
                         help="Opt-in SMAC diagnostic: save one pre-update checkpoint and observation snapshot")
     parser.add_argument("--decoder_diag_capture_id", type=str, default=None,
-                        help="Safe identifier used to name the two snapshot files")
+                        help="Safe identifier used to name the aligned stage-specific snapshot files")
+    parser.add_argument("--decoder_diag_capture_episodes", type=str, default="1,10",
+                        help="Comma-separated 0-based SMAC episode indices to capture; opt-in only")
 
     # add for online multi-task
     parser.add_argument("--train_maps", type=str, nargs='+', default=None)
