@@ -33,3 +33,12 @@ jobs:
           grep -Fq 'repository_root=' <<< "$output"
           grep -Fq ' --agent_order_mode obs_norm ' <<< "$output"
           grep -Fq 'DRY_RUN=1: command printed; no training started.' <<< "$output"
+          low_parallel_output="$(DRY_RUN=1 N_ROLLOUT_THREADS=1 N_TRAINING_THREADS=2 USE_EVAL=0 AGENT_ORDER_MODE=obs_norm bash mat/scripts/train_smac_research.sh 3m 0 1)"
+          printf '%s\\n' "$low_parallel_output"
+          grep -Fq 'rollout_threads=1 training_threads=2' <<< "$low_parallel_output"
+          grep -Fq 'use_eval=0' <<< "$low_parallel_output"
+          grep -Fq ' --n_rollout_threads 1 ' <<< "$low_parallel_output"
+          if grep -q -- '--use_eval' <<< "$low_parallel_output"; then
+            echo "ERROR: --use_eval found when USE_EVAL=0" >&2
+            exit 1
+          fi
