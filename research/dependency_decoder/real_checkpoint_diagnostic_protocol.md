@@ -386,6 +386,80 @@ The present gate is **not satisfied**, so the low-rank scorer
 remains standalone. Introducing per-step counterfactual probes into
 MAT rollout would violate the desired minimal compute overhead.
 
+## Real intermediate-policy SMAC 3m pilot — 100,000 steps (verified)
+
+On 2026-10-09 the bounded private
+[GPU 0 experiment #37924371727](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37924371727)
+completed successfully, including training, six stage-aligned frozen
+checkpoint/snapshot captures, post-run CPU KL–TV diagnostics, and
+[artifact #11614615026](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37924371727/artifacts/11614615026).
+It used SMAC `3m`, seed 1, `obs_norm` ordering, one rollout
+environment, 100,000 environment steps, PPO epoch 5, and evaluation
+disabled. None of the runs altered PPO or the MAT Decoder topology.
+
+There are exactly FOUR adjacent pre-action observations per stage;
+`N=3` agents permits at most `4*3*(3-1)=24` directed
+agent pairs, but only predecessor-to-successor pairs and legal
+action contrasts are measurable.
+
+| Approx. environment steps | Mean conditional KL | Mean TV | Measured pairs / 24 |
+| ---: | ---: | ---: | ---: |
+| 0 | 1.6495076246743345e-13 | 2.2725765802533715e-07 | 9 |
+| 100 | 1.5870703189146962e-12 | 6.674547421425814e-07 | 9 |
+| 1,000 | 5.11630446453637e-07 | 3.5769265377894044e-04 | 4 |
+| 10,000 | 2.4218703620135784e-03 | 8.279197849333286e-03 | 5 |
+| 50,000 | 1.036502726492472e-05 | 3.9655115688219666e-04 | 8 |
+| 90,000 | 6.027619238011539e-04 | 5.633640103042126e-04 | 7 |
+
+Each stage used 32 independently sampled joint actions *at its
+recorded observation*, but the four successive observations are not
+four independent trajectories. The positive dependence-sensitivity
+change at 10,000 steps establishes that learned conditional MAT action
+distributions can respond detectably to predecessor interventions.
+It is **not monotonic**, and mean scores across stage snapshots
+are confounded by changing observations and measured-pair coverage.
+
+### Matched-state early-vs-late comparison: severe support mismatch
+
+The diagnostic replayed the early and 90k-step frozen checkpoints
+on the exact SAME four early observations, legal action masks and
+stored agent order, using 32 joint-action histories drawn from the
+**initial policy**:
+
+- Mean early-model conditional KL: `1.6727485824437338e-13`.
+- Mean later-model conditional KL on **early-drawn actions**:
+  `0.006481548305600882`.
+- Max absolute joint action log-probability shift: `31.7130699`.
+- Importance sampling ESS by context: `[1.009, 1.038, 13.015, 1.046]`
+  out of 32. Only one context passed ESS >= 5, and it had no
+  measurable pairs; no SNIS-weighted late-model KL is reported.
+
+**Do not misinterpret the matched late KL as E_{a~late}[C_late].**
+It is an average over actions drawn from the initial policy.
+The enormous importance-ratio shift makes correcting it with
+the 32 sampled early actions unreliable. It can show policy
+function changes at fixed input and actions, but cannot prove
+what dependency magnitudes are typical under the evolved policy.
+
+### Next low-complexity diagnostic: direct frozen target Monte Carlo
+
+The independent `paired_checkpoint_diagnostic.py` now optionally
+accepts `--direct-target-histories H`. With original SMAC
+observation, legal masks and decoding order held fixed, it samples
+joint actions **directly** from the late frozen MAT decoder and
+estimates `E_{a~late}[C_late(a)]` (KL and TV), plus
+within-context action-history Monte Carlo standard errors for TV.
+This does not need importance weights or additional trainable
+parameters and runs **only offline on CPU**. It does NOT provide
+confidence intervals across independent game episodes, which
+would require sampling new environmental trajectories.
+
+Any new results must be reported distinctly from
+`E_{a~early}[C_late(a)]` and cannot be converted into
+causal ground-truth graph labels. The `stage_quality_review.py`
+report explicitly refuses learned-order supervision in this
+single-seed setting.
+
 ## Math and interpretation
 
 1. Under a fixed observation, legal mask and stored permutation,
