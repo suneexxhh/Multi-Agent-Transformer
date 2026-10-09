@@ -101,6 +101,67 @@ would be inappropriate. Normal SMAC training did finish with exit code
 0 and the controlled artifact was uploaded, without modifying any
 GPU 1/2 process.
 
+## V1.2: cross-stage and matched-context experiment (opt-in)
+
+The multi-context capture now collects **four original-agent
+pre-action contexts** at steps `0,10,20,30` during each of two
+training episodes, indexed `1` and `10`. In the bounded one-env
+2,000-step smoke these occur after roughly 100 and 1,000 previous
+training timesteps. Within each episode, MAT parameters are not
+updated until the rollout ends, so all four contexts are paired to
+one exact weights-only checkpoint. Filenames receive the suffix
+`_ep0001` or `_ep0010` before `_snapshot.npz` and
+`_transformer.pt`. Metadata fields `context_step` and
+`context_episode` track the provenance of every row. Default
+`DECODER_DIAG_CAPTURE=0` preserves ordinary MAT training.
+
+Two different comparisons must **not** be conflated:
+
+1. **Across sampled environments:** the per-context KL scores in
+   each stage describe sensitivity at the observed states. Differences
+   between early and late snapshots confound *changed policy* and
+   *changed observations*. They can assess within-stage variability,
+   not isolate learning-induced change.
+
+2. **Matched-state frozen-policy comparison:** use
+   `research/dependency_decoder/paired_checkpoint_diagnostic.py`.
+   Sample joint actions once from the early decoder on a fixed
+   snapshot, then evaluate `C_early(a)` and `C_late(a)` with the
+   exact same `o`, legal masks, original-agent order and complete
+   action histories. Each checkpoint uses its **own Encoder** to
+   produce features. This isolates conditional model sensitivity
+   changes from observed-state and chosen-action-history changes;
+   however it remains a comparison of two learned conditional
+   policies, not environment causality.
+
+The module also teacher-forces both complete action distributions,
+uses joint log-likelihood ratios to compute SNIS weights, and
+reports importance-weight ESS. If ESS is below the predefined
+threshold, it withholds the SNIS-weighted target sensitivity
+rather than claiming a meaningful estimate. A large parameter
+change does not guarantee a meaningful change in decoded
+dependency; both must be measured.
+
+Example CPU command after downloading the matching artifact:
+
+```bash
+CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=2 python -m research.dependency_decoder.paired_checkpoint_diagnostic \
+  --checkpoint-early /path/to/MAT_..._ep0001_transformer.pt \
+  --checkpoint-late /path/to/MAT_..._ep0010_transformer.pt \
+  --snapshot /path/to/MAT_..._ep0001_snapshot.npz \
+  --n-block 1 --n-embd 64 --n-head 1 \
+  --histories 8 --max-context-batch 2 \
+  --max-counterfactual-batch 16 \
+  --min-importance-ess 3 \
+  --output /path/to/MAT_..._matched_comparison.json
+```
+
+Eight histories and one training seed are only a functional
+diagnostic; never interpret microscopic near-zero KL changes as
+evidence of an improvement in MARL coordination or graph-learning
+accuracy. Until real dependency labels are defensible, the low-rank
+precedence scorer remains **isolated from PPO**.
+
 ## Math and interpretation
 
 1. Under a fixed observation, legal mask and stored permutation,
