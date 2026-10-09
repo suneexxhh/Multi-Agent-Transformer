@@ -3,7 +3,7 @@
 **Status:** V1 pairwise scorer remains *isolated* and untrained. A separate,
 opt-in stored-order transport path is now connected across SMAC rollouts,
 Replay Buffer, MAT sampling/evaluation, and PPO Trainer. This opt-in path
-has NOT yet been validated with real GPU training; it does not turn on a
+has been validated with real GPU training; it does not turn on a
 learned scorer or claim directed causal dependency inference.
 
 ## Verified foundation
@@ -71,9 +71,15 @@ and a constant seed. V1 does **not** have that guarantee.
   26 tests, 23 passed, 3 CUDA-only skipped; includes a trainer spy test
   confirming the permutation is forwarded unchanged. CPU tests do not prove
   that an end-to-end GPU SMAC rollout is correct.
-- A bounded GPU 0, SMAC 3m, `new_titans`, 2,000-step test of the opt-in
-  storage transport has been requested in the **private controller**.
-  Its completion should be checked from Issue #1, not assumed successful.
+- **Actual GPU validation succeeded:** [private Run #37894004324](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37894004324)
+  activated `STORE_AGENT_ORDERS=1` on GPU 0 in `new_titans` and
+  executed SMAC `3m` for 2,000 requested steps, 1 rollout env, 1 PPO epoch.
+  The run completed with code 0 and executed all 26 unittests with no skips
+  (including CUDA tests). It generated and uploaded
+  `mat/scripts/logs/MAT_obs_norm_seed1_20261009_143245_446718211.log`
+  ([Artifact](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37894004324/artifacts/11599518217)).
+  **This validates the transport infrastructure, not the untrained scorer
+  or any win-rate improvement.**
 
 ## Required next engineering milestones
 
