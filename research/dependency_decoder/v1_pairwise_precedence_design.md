@@ -99,29 +99,11 @@ C_(j->i) =
 ```
 
 This measures **within-policy conditional sensitivity**, not a causal
-effect on environment dynamics or optimal joint return. The implementation
-`research/dependency_decoder/action_influence_probe.py` uses one baseline
-decoder pass and one **batched** perturbation decoder pass, returning a
-`[B,N,N]` directed KL matrix in the original agent-ID axes. It checks
-action availability, requires eval mode, and skips agents without legal
-alternatives. The diagnostic has two Python decoder calls but evaluates
-up to `N-1` parallel perturbation contexts, so it is **not** constant
-compute or a free parallel-policy speedup. The alternative legal action
-is deterministic (first available) and the resulting KL is not an
-unbiased intervention average or label by itself.
-
-Synthetic tests `tests/test_action_influence_probe.py` isolate a known
-toy decoder edge and require only that link to be positive while all
-others remain zero. This is a unit test of our calculation, not an
-experimental finding on StarCraft II. It only
-observes directed pairs present as preceding/succeeding in the
-chosen order, so it cannot identify both directions without
-additional ordering contexts. It may reflect attention/model
-artifacts. Validate candidate labels first on small controlled toy
-games whose directed dependencies are specified externally; then
-evaluate whether learned precedence predicts held-out sensitivity
-or improves return. Do not use arbitrary observation norm as a
-label for causal dependence.
+effect on environment dynamics or optimal joint return. The implemented
+probe averages *all different legal action IDs* (uniformly, not under
+the learned policy), uses chunked vectorized decoder calls and returns
+both the scores and their observability mask. Details and limitations
+are specified in the next section.
 
 ### Robust offline sensitivity and identifiability (implemented)
 
@@ -168,6 +150,44 @@ orientation under another, reject unknown edges, then verify that the
 low-rank scorer can learn the known directed label. This establishes
 synthetic signal compatibility only, not predictive validity on SMAC.
 
+### Held-out synthetic dependency evaluation (offline, CPU)
+
+`research/dependency_decoder/heldout_oracle_benchmark.py` supplies an
+explicitly specified **test-only** conditional-action decoder with
+edge matrix `G[b,source,target]`. Only a direct edge and the
+counterfactually changed action class can alter a target's logits.
+The oracle itself gets `G` for testing; **the learned low-rank scorer
+receives ONLY a scalar trait per agent, not `G`**.
+
+The synthetic graph generator uses a known scalar threshold rule:
+
+```text
+G_ij = 1[trait_i - trait_j > delta], delta = 0.55.
+```
+
+These are DAGs from **one known shared priority rule**, not arbitrary
+causal graphs or unseen task objectives. The benchmark verifies
+KL-probe precision/recall/false-positive rate against known edges
+for previously unseen 3-, 4- and 5-agent graphs. Removing the only
+action class that triggers a real edge can produce a *measured zero*
+even though the edge exists: the support of legal actions matters.
+
+The low-rank scorer trains from candidate preference labels on
+72 sampled 4-agent graph contexts. An **independent calibration
+split** of 48 distinct 4-agent graph contexts selects the smallest
+confidence threshold yielding best recall under a 5% false-positive
+budget. A separate 56-context 5-agent holdout is evaluated **once**,
+with this frozen threshold. This protocol specifically prevents
+tuning on the final test graphs. Test thresholds and confusion
+statistics are printed in GitHub CPU CI; see
+`tests/test_heldout_oracle_benchmark.py`.
+
+A **rule reversal negative control** intentionally reverses the
+structural dependence rule: a scorer respecting the original priority
+rule is not expected to generalize. The result should be reported as a
+limitation, not silently removed. Synthetic oracle accuracy is not
+evidence that PPO learns improved MARL coordination.
+
 ### Topological-layer parallelism: not yet implemented
 
 The original masked self-attention decoder does **not** automatically
@@ -194,6 +214,10 @@ claiming a speedup.
   `tests/test_directional_oracle_supervision_v1.py`:
   legal alternatives, unknown versus measured-zero edges, original agent
   ID restoration, synthetic directed-edge recovery and masked supervision.
+- `research/dependency_decoder/heldout_oracle_benchmark.py` and
+  `tests/test_heldout_oracle_benchmark.py`:
+  reproducible held-out directed-graph sensitivity metrics, separate
+  confidence-threshold calibration and explicitly failing OOD rule test.
 - `mat/algorithms/mat/algorithm/ma_transformer.py`,
   `mat/algorithms/mat/algorithm/transformer_policy.py`,
   `mat/utils/shared_buffer.py`, `mat/algorithms/mat/mat_trainer.py`,
@@ -216,11 +240,12 @@ claiming a speedup.
 1. Keep the low-rank scorer isolated; compare it with the previous
    pair-MLP scoring implementation on synthetic known relationships
    (parameter count, ranking accuracy, inference overhead).
-2. The all-legal-action KL diagnostic, explicit observability mask
-   and a bidirectional-order synthetic oracle are implemented. Next
-   evaluate held-out dependencies and calibrate the KL margin against
-   false-positive associations in more diverse controlled toy games;
-   do not infer environmental causality from a conditional-policy probe.
+2. Basic held-out DAG recovery, confidence calibration and one
+   deliberately opposite-rule failure control are now implemented.
+   Next evaluate more diverse dependency mechanisms, stochastic
+   history/action distributions, partial legal-action support, and
+   calibration transfer. A scalar priority rule is not sufficient
+   scientific evidence for actual SMAC decision influence.
 3. Define a training/evaluation protocol before integrating the
    learned graph. Add scorer freeze boundaries and an explicit stored
    permutation regression across scorer-weight changes.
