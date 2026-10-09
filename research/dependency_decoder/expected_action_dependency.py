@@ -14,7 +14,8 @@ from research.dependency_decoder.action_influence_probe import (
 @torch.no_grad()
 def probe_action_histories(decoder, obs_rep, obs, action_histories,
                            available_actions, agent_order=None,
-                           max_context_batch=16, max_counterfactual_batch=128):
+                           max_context_batch=16, max_counterfactual_batch=128,
+                           return_tv=False):
     """Apply the existing KL probe to H histories, in bounded batches.
 
     obs_rep [B,N,D], obs [B,N,O], action_histories [H,B,N,1].
@@ -51,6 +52,7 @@ def probe_action_histories(decoder, obs_rep, obs, action_histories,
     # Do not expand and materialize [H,B,N,D] encoder features.
     # Only a bounded slice of repeated contexts enters each probe.
     scores, masks = [], []
+    tv_all = [] if return_tv else None
     for start in range(0, flat, max_context_batch):
         stop = min(start + max_context_batch, flat)
         originals = torch.arange(start, stop, device=obs_rep.device) % b
@@ -65,15 +67,22 @@ def probe_action_histories(decoder, obs_rep, obs, action_histories,
             order_chunk = agent_order.index_select(0, originals)
         else:
             order_chunk = agent_order.reshape(flat, n)[start:stop]
-        s, mask = legal_action_kl_probe(
+        result = legal_action_kl_probe(
             decoder, rep_chunk, obs_chunk, action_flat[start:stop], legal_chunk,
             agent_order=order_chunk, return_valid=True,
             max_counterfactual_batch=max_counterfactual_batch,
+            return_tv=return_tv,
         )
+        s, mask = result[:2]
         scores.append(s)
         masks.append(mask)
-    return (torch.cat(scores, dim=0).reshape(h, b, n, n),
-            torch.cat(masks, dim=0).reshape(h, b, n, n))
+        if return_tv:
+            tv_all.append(result[2])
+    outputs = (torch.cat(scores, dim=0).reshape(h, b, n, n),
+               torch.cat(masks, dim=0).reshape(h, b, n, n))
+    if return_tv:
+        return outputs + (torch.cat(tv_all, dim=0).reshape(h, b, n, n),)
+    return outputs
 
 
 @torch.no_grad()
