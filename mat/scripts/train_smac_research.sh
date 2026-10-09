@@ -24,6 +24,7 @@ EVAL_EPISODES="${EVAL_EPISODES:-32}"
 USE_EVAL="${USE_EVAL:-1}"
 STORE_AGENT_ORDERS="${STORE_AGENT_ORDERS:-0}"
 DECODER_DIAG_CAPTURE="${DECODER_DIAG_CAPTURE:-0}"
+DECODER_DIAG_CAPTURE_EPISODES="${DECODER_DIAG_CAPTURE_EPISODES:-1,10}"
 for positive_int in "$N_ROLLOUT_THREADS" "$N_TRAINING_THREADS" \
                     "$N_EVAL_ROLLOUT_THREADS" "$EVAL_EPISODES"; do
   if ! [[ "$positive_int" =~ ^[1-9][0-9]*$ ]]; then
@@ -124,6 +125,7 @@ fi
 if [[ "$DECODER_DIAG_CAPTURE" == "1" ]]; then
   args+=(--decoder_diag_capture_dir "$LOG_DIR")
   args+=(--decoder_diag_capture_id "${LOG_METHOD_NAME}_seed${SEED}_${STAMP}")
+  args+=(--decoder_diag_capture_episodes "$DECODER_DIAG_CAPTURE_EPISODES")
 fi
 
 # Work in a subshell when tee captures output; pipefail ensures that a
@@ -158,6 +160,7 @@ run_training() {
   printf 'agent_order_mode=%s agent_order_seed=%s\n' "$AGENT_ORDER_MODE" "$AGENT_ORDER_SEED"
   printf 'store_agent_orders=%s\n' "$STORE_AGENT_ORDERS"
   printf 'decoder_diag_capture=%s\n' "$DECODER_DIAG_CAPTURE"
+  printf 'decoder_diag_capture_episodes=%s\n' "$DECODER_DIAG_CAPTURE_EPISODES"
   printf 'rollout_threads=%s training_threads=%s eval_threads=%s eval_episodes=%s use_eval=%s\n' \
     "$N_ROLLOUT_THREADS" "$N_TRAINING_THREADS" "$N_EVAL_ROLLOUT_THREADS" "$EVAL_EPISODES" "$USE_EVAL"
   printf 'repository_root=%s\nlog_file=%s\n' "$REPO_ROOT" "$LOG_FILE"
