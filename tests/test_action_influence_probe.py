@@ -206,20 +206,47 @@ class TestActionInfluenceProbe(unittest.TestCase):
         obs = torch.zeros(1, 2, 4, dtype=torch.float32)
         actions = torch.zeros(1, 2, 1, dtype=torch.long)
         legal = torch.ones(1, 2, 2)
-        scores, valid = legal_action_kl_probe(
-            decoder, rep, obs, actions, legal, return_valid=True)
+        scores, valid, tv = legal_action_kl_probe(
+            decoder, rep, obs, actions, legal, return_valid=True,
+            return_tv=True)
         expected = math.log(math.cosh(0.0001 / 2))
         self.assertTrue(valid[0, 0, 1].item())
         self.assertGreater(scores[0, 0, 1].item(), 1e-9)
         self.assertAlmostEqual(scores[0, 0, 1].item(),
                                expected, delta=4e-12)
         self.assertTrue(torch.isfinite(scores).all())
+        self.assertAlmostEqual(tv[0, 0, 1].item(),
+                               0.5 * math.tanh(0.0001 / 2), delta=2e-9)
+        self.assertLessEqual(2 * tv[0, 0, 1].item() ** 2,
+                             scores[0, 0, 1].item() + 1e-12)
+        # TV and KL both vanish identically when the distributions are equal.
+        self.assertTrue((tv >= 0).all().item())
+        self.assertTrue((tv <= 1).all().item())
         legal[:, 1] = torch.tensor([1., 0.])
-        masked, coverage = legal_action_kl_probe(
-            decoder, rep, obs, actions, legal, return_valid=True)
+        masked, coverage, masked_tv = legal_action_kl_probe(
+            decoder, rep, obs, actions, legal, return_valid=True,
+            return_tv=True)
         self.assertTrue(torch.isfinite(masked).all())
         self.assertFalse(coverage[0, 0, 1].item())
         self.assertEqual(masked[0, 0, 1].item(), 0.0)
+        self.assertEqual(masked_tv[0, 0, 1].item(), 0.0)
+
+    def test_total_variation_uses_no_additional_decoder_calls(self):
+        decoder = OnlyFirstToThirdToyDecoder().eval()
+        rep, obs, actions, legal = self._inputs()
+        original, mask = legal_action_kl_probe(
+            decoder, rep, obs, actions, legal, return_valid=True)
+        reference_calls = list(decoder.forward_calls)
+        decoder.forward_calls.clear()
+        output, coverage, tv = legal_action_kl_probe(
+            decoder, rep, obs, actions, legal, return_valid=True, return_tv=True)
+        self.assertEqual(reference_calls, decoder.forward_calls)
+        self.assertTrue(torch.equal(mask, coverage))
+        self.assertTrue(torch.equal(original, output))
+        self.assertTrue((tv[:, 0, 2] > 0).all().item())
+        self.assertTrue(torch.equal(tv[:, 1, 2], torch.zeros_like(tv[:, 1, 2])))
+        self.assertTrue(torch.equal(
+            tv[:, :, :2], torch.zeros_like(tv[:, :, :2])))
 
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA not available")
     def test_cuda_probe(self):
