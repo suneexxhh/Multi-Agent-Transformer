@@ -75,6 +75,37 @@ NUM_ENV_STEPS="${NUM_ENV_STEPS:-$default_steps}"
 PPO_EPOCH="${PPO_EPOCH:-$default_epochs}"
 CLIP_PARAM="${CLIP_PARAM:-$default_clip}"
 
+# Fail before SC2/GPU work on invalid budgets. Distinguish the archived
+# MAT-MSA reference from short pilot runs and never silently promote
+# a pilot experiment to full reference status.
+for positive_int in "$NUM_ENV_STEPS" "$PPO_EPOCH"; do
+  if ! [[ "$positive_int" =~ ^[1-9][0-9]*$ ]]; then
+    echo "NUM_ENV_STEPS and PPO_EPOCH must be positive integers" >&2
+    exit 2
+  fi
+done
+if (( NUM_ENV_STEPS < 100 || NUM_ENV_STEPS % (100 * N_ROLLOUT_THREADS) != 0 )); then
+  echo "NUM_ENV_STEPS must be >= 100 and divisible by 100 * N_ROLLOUT_THREADS" >&2
+  exit 2
+fi
+if ! [[ "$CLIP_PARAM" =~ ^(0\\.[0-9]+|1\\.0+)$ ]]; then
+  echo "CLIP_PARAM must be a decimal probability in (0,1]" >&2
+  exit 2
+fi
+if [[ "$CLIP_PARAM" =~ ^0\\.0+$ ]]; then
+  echo "CLIP_PARAM must be positive" >&2
+  exit 2
+fi
+PROTOCOL_CLASS="pilot_or_nonreference"
+if [[ "$NUM_ENV_STEPS" == "$default_steps" &&
+      "$PPO_EPOCH" == "$default_epochs" &&
+      "$CLIP_PARAM" == "$default_clip" &&
+      "$N_ROLLOUT_THREADS" == "32" &&
+      "$N_TRAINING_THREADS" == "16" &&
+      "$USE_EVAL" == "1" ]]; then
+  PROTOCOL_CLASS="historical_reference_candidate"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
@@ -161,6 +192,8 @@ run_training() {
   echo "MAT Decoder Auto Research / original Encoder-Critic baseline"
   printf 'method=%s map=%s gpu=%s seed=%s steps=%s ppo_epoch=%s clip=%s\n' \
     "$LOG_METHOD_NAME" "$MAP" "$GPU_ID" "$SEED" "$NUM_ENV_STEPS" "$PPO_EPOCH" "$CLIP_PARAM"
+  printf 'training_protocol_class=%s historical_reference_candidate_is_unverified=1\n' "$PROTOCOL_CLASS"
+  printf 'reference_map_steps=%s reference_ppo_epoch=%s reference_clip=%s\n' "$default_steps" "$default_epochs" "$default_clip"
   printf 'agent_order_mode=%s agent_order_seed=%s\n' "$AGENT_ORDER_MODE" "$AGENT_ORDER_SEED"
   printf 'store_agent_orders=%s\n' "$STORE_AGENT_ORDERS"
   printf 'decoder_diag_capture=%s\n' "$DECODER_DIAG_CAPTURE"
