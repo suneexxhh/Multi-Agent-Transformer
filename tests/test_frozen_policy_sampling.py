@@ -112,6 +112,10 @@ class TestFrozenPolicySampling(unittest.TestCase):
         self.assertGreater(estimated_p, observed_q + 0.25)
         self.assertGreater(ess[0].item(), 100)
         self.assertLess(ess[0].item(), 2400)
+        guarded, good_ess = self_normalized_policy_weights(
+            logp, logq, min_ess=100)
+        self.assertTrue(torch.allclose(guarded, weights))
+        self.assertTrue(torch.allclose(good_ess, ess))
         self.assertTrue(torch.allclose(weights.sum(0), torch.ones(1)))
         print(
             "FROZEN_MAT_SHIFT "
@@ -178,6 +182,8 @@ class TestFrozenPolicySampling(unittest.TestCase):
         weights, ess = self_normalized_policy_weights(joint_p, joint_q)
         self.assertTrue(torch.allclose(weights.sum(0), torch.ones(1)))
         self.assertLess(ess.item(), 180.0)
+        with self.assertRaisesRegex(ValueError, "ESS below min_ess"):
+            self_normalized_policy_weights(joint_p, joint_q, min_ess=100)
         # Severe shift can leave only a few high-weight events.
         # Such estimates require abstention or new target-policy data,
         # not a claim of reliable calibrated action dependence.
