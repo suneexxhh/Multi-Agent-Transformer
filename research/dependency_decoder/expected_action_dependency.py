@@ -32,34 +32,42 @@ def probe_action_histories(decoder, obs_rep, obs, action_histories,
             or action_histories.shape[-1] != 1 or action_histories.shape[0] == 0):
         raise ValueError("action_histories must be [H,B,N,1] with H > 0")
     h, b, n, _ = action_histories.shape
-    if available_actions.ndim == 3:
+    shared_legal = available_actions.ndim == 3
+    if shared_legal:
         if available_actions.shape[:2] != (b, n):
             raise ValueError("shared available_actions require [B,N,A]")
-        available_actions = available_actions.unsqueeze(0).expand(h, -1, -1, -1)
     elif available_actions.ndim != 4 or available_actions.shape[:3] != (h, b, n):
         raise ValueError("available_actions must be [H,B,N,A] or [B,N,A]")
+    shared_order = agent_order is not None and agent_order.ndim == 2
     if agent_order is not None:
-        if agent_order.ndim == 2 and agent_order.shape == (b, n):
-            agent_order = agent_order.unsqueeze(0).expand(h, -1, -1)
-        elif agent_order.shape != (h, b, n):
+        if shared_order and agent_order.shape != (b, n):
+            raise ValueError("shared agent_order requires [B,N]")
+        if not shared_order and agent_order.shape != (h, b, n):
             raise ValueError("agent_order must be [B,N] or [H,B,N]")
     if not isinstance(max_context_batch, int) or max_context_batch < 1:
         raise ValueError("max_context_batch must be positive")
     flat = h * b
-    rep_flat = obs_rep.unsqueeze(0).expand(h, -1, -1, -1).reshape(flat, n, -1)
-    obs_flat = obs.unsqueeze(0).expand(h, -1, -1, -1).reshape(flat, n, -1)
     action_flat = action_histories.reshape(flat, n, 1)
-    legal_flat = available_actions.reshape(flat, n, -1)
-    order_flat = agent_order.reshape(flat, n) if agent_order is not None else None
-
+    # Do not expand and materialize [H,B,N,D] encoder features.
+    # Only a bounded slice of repeated contexts enters each probe.
     scores, masks = [], []
     for start in range(0, flat, max_context_batch):
         stop = min(start + max_context_batch, flat)
+        originals = torch.arange(start, stop, device=obs_rep.device) % b
+        rep_chunk = obs_rep.index_select(0, originals)
+        obs_chunk = obs.index_select(0, originals)
+        legal_chunk = (available_actions.index_select(0, originals)
+                       if shared_legal else
+                       available_actions.reshape(flat, n, -1)[start:stop])
+        if agent_order is None:
+            order_chunk = None
+        elif shared_order:
+            order_chunk = agent_order.index_select(0, originals)
+        else:
+            order_chunk = agent_order.reshape(flat, n)[start:stop]
         s, mask = legal_action_kl_probe(
-            decoder, rep_flat[start:stop], obs_flat[start:stop],
-            action_flat[start:stop], legal_flat[start:stop],
-            agent_order=(order_flat[start:stop] if order_flat is not None else None),
-            return_valid=True,
+            decoder, rep_chunk, obs_chunk, action_flat[start:stop], legal_chunk,
+            agent_order=order_chunk, return_valid=True,
             max_counterfactual_batch=max_counterfactual_batch,
         )
         scores.append(s)
