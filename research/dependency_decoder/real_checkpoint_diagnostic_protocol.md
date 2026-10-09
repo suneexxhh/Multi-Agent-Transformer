@@ -656,6 +656,63 @@ rollouts and matched identity/learned-order ablations. Still no
 Decoder parameters or PPO losses have been changed by these
 diagnostics.
 
+## Experiment protocol audit: pilot vs historical MAT-MSA reference
+
+The earlier 100k `3m` identity/obs_norm runs were **engineering pilots**,
+not equivalent to the user's map-dependent MAT-MSA benchmark settings.
+Their configurations were `num_env_steps=100000`, `ppo_epoch=5`,
+`n_rollout_threads=1`, `n_training_threads=2`, and `use_eval=0`
+with 32-episode native evaluation applied afterward. Even a paired
+five-seed contrast from these runs cannot be reported as a
+full-budget benchmark comparison.
+
+The branch launcher
+`mat/scripts/train_smac_research.sh` preserves these **provisional**
+historical MAT-MSA map-specific *request* defaults, pending
+reconciliation with the original map launch scripts:
+
+| Map | Requested environment steps | PPO epochs | PPO clip |
+| --- | ---: | ---: | ---: |
+| `3m` | 5,000,000 | 15 | 0.20 |
+| `3s5z` | 5,000,000 | 10 | 0.05 |
+| `5m_vs_6m` | 5,000,000 | 10 | 0.05 |
+| `10m_vs_11m` | 5,000,000 | 10 | 0.05 |
+| `6h_vs_8z` | 10,000,000 | 15 | 0.05 |
+| `MMM2` | 10,000,000 | 5 | 0.05 |
+| `3s5z_vs_3s6z` | 20,000,000 | 5 | 0.05 |
+| `27m_vs_30m` | 10,000,000 | 5 | 0.20 |
+
+The generic launcher fallback, `10,000,000 / 15 / 0.05`,
+must **NOT** be assumed to be the user's verified original
+configuration for any unlisted map.
+
+As in the upstream MAT loop, actual environment timesteps
+equal `floor(requested/(episode_length*n_rollout_threads)) *
+episode_length*n_rollout_threads`. The launcher now reports both
+`requested_env_steps` and `effective_env_steps` and emits a
+round-down warning. For example, with 32 rollout environments,
+5,000,000 requested steps result in 4,998,400 executed steps;
+this is expected batching behavior, not a training failure.
+Strict divisibility would incorrectly reject authentic runs.
+
+The new metadata field `training_protocol_class` is either
+`historical_reference_candidate` or `pilot_or_nonreference`.
+Even the *candidate* is explicitly labeled
+`historical_reference_candidate_is_unverified=1` until the
+user's original launch commands have been checked.
+`NUM_ENV_STEPS`, `PPO_EPOCH`, and `CLIP_PARAM` must validate
+**before** GPU/SC2 startup. The regression suite
+`tests/test_training_protocol.py` dry-runs every explicit map,
+the 100k pilot and malformed values without accessing any GPU.
+[Source CI #37933180555](https://github.com/suneexxhh/Multi-Agent-Transformer/actions/runs/37933180555)
+passed 88 unit tests (84 passed, 4 skipped) and launcher checks.
+
+**Research constraint:** rollout order, update budget, critic,
+optimizer, seed, map, evaluation protocol, and effective environment
+steps must match between formal identity/obs_norm/learned-order
+ablation arms. Sensitivity KL/TV and entropy alone are not
+performance-improvement evidence.
+
 ## Math and interpretation
 
 1. Under a fixed observation, legal mask and stored permutation,
