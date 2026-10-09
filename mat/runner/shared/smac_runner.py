@@ -26,16 +26,25 @@ class SMACRunner(Runner):
         last_battles_game = np.zeros(self.n_rollout_threads, dtype=np.float32)
         last_battles_won = np.zeros(self.n_rollout_threads, dtype=np.float32)
 
+        # Diagnostic capture is optional, bounded, and never changes
+        # PPO. Each stage collects four contexts before any model update.
+        capture_episodes = set()
+        if getattr(self.all_args, "decoder_diag_capture_dir", None):
+            raw = getattr(self.all_args, "decoder_diag_capture_episodes", "1,10")
+            parts = raw.split(",") if isinstance(raw, str) else []
+            if (not parts or len(parts) > 8 or
+                    any(not part.isdecimal() for part in parts)):
+                raise ValueError("capture episodes must be 1-8 comma-separated indices")
+            selected = [int(part) for part in parts]
+            if len(set(selected)) != len(selected) or max(selected) >= episodes:
+                raise ValueError("capture episodes must be distinct and in training range")
+            if self.buffer.agent_orders is None:
+                raise ValueError("diagnostic capture requires --store_agent_orders")
+            capture_episodes = set(selected)
+
         for episode in range(episodes):
-            # Opt-in: inspect two training stages, each with four
-            # distinct pre-action observations and ONE shared checkpoint.
-            # Episodes are indices, so snapshots follow 100 and 1000
-            # previous training steps in the single-env smoke setup.
             capture = None
-            if (episode in (1, 10) and
-                    getattr(self.all_args, "decoder_diag_capture_dir", None)):
-                if self.buffer.agent_orders is None:
-                    raise ValueError("diagnostic capture requires --store_agent_orders")
+            if episode in capture_episodes:
                 from research.dependency_decoder.snapshot_capture import MultiContextCapture
                 capture = MultiContextCapture(steps=(0, 10, 20, 30))
 
