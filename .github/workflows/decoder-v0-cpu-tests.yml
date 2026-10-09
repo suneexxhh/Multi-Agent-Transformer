@@ -27,4 +27,9 @@ jobs:
       - name: Check SMAC launcher syntax and dry run (without SC2)
         run: |
           bash -n mat/scripts/train_smac_research.sh
-          DRY_RUN=1 AGENT_ORDER_MODE=obs_norm bash mat/scripts/train_smac_research.sh 3m 0 1
+          output="$(DRY_RUN=1 AGENT_ORDER_MODE=obs_norm bash mat/scripts/train_smac_research.sh 3m 0 1)"
+          printf '%s\\n' "$output"
+          grep -Fq 'agent_order_mode=obs_norm agent_order_seed=1' <<< "$output"
+          grep -Fq 'repository_root=' <<< "$output"
+          grep -Fq ' --agent_order_mode obs_norm ' <<< "$output"
+          grep -Fq 'DRY_RUN=1: command printed; no training started.' <<< "$output"
