@@ -32,6 +32,17 @@ if DRY_RUN=1 DECODER_DIAG_CAPTURE=1 STORE_AGENT_ORDERS=0 \
   exit 1
 fi
 
+# Bounded intermediate-policy training may capture 0/1/10/100/500/900.
+dry_multi="$(DRY_RUN=1 STORE_AGENT_ORDERS=1 DECODER_DIAG_CAPTURE=1 \
+  DECODER_DIAG_CAPTURE_EPISODES=0,1,10,100,500,900 \
+  AGENT_ORDER_MODE=obs_norm bash "$launcher" 3m 0 7)"
+grep -Fq ' --decoder_diag_capture_episodes 0\\,1\\,10\\,100\\,500\\,900 ' <<< "$dry_multi"
+if DRY_RUN=1 STORE_AGENT_ORDERS=1 DECODER_DIAG_CAPTURE=1 \
+  DECODER_DIAG_CAPTURE_EPISODES='1,10,abc' bash "$launcher" 3m 0 7 >/dev/null 2>&1; then
+  echo "ERROR: invalid diagnostic checkpoint stages must fail before SMAC" >&2
+  exit 1
+fi
+
 mkdir -p "$work/fake_env/bin"
 cat > "$work/conda.sh" <<'FAKE_CONDA'
 conda() {
