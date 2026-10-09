@@ -220,6 +220,64 @@ model causality, or evidence of an improvement in episodic return.
 The CPU CI run had 43 total unit tests, 39 passed and 4
 CUDA-dependent tests skipped.
 
+### Multi-parent nonlinear dependence and action-history blind spots
+
+A new offline benchmark (`research/dependency_decoder/nonlinear_history_oracle.py`,
+`tests/test_nonlinear_history_oracle.py`) explicitly constructs a
+three-agent, two-parent conditional action policy. With actions
+`a_0,a_1 in {0,1,2}` and target agent 2:
+
+```text
+z_AND = 1[a_0=2] * 1[a_1=2]
+z_XOR = |1[a_0=2] - 1[a_1=2]|
+logit_target[action=1] = lambda * z
+```
+
+These are known conditional *policy* mechanisms, not proofs of
+environmental cause-effect or multi-agent reward coordination.
+
+For AND at baseline `(a_0,a_1)=(0,0)`, replacing either action by
+another legal action in isolation never activates the conjunction,
+so BOTH genuine parent dependencies yield KL=0 despite being
+measurable. At baseline `(2,0)`, only agent 1's influence is detected;
+at `(2,2)`, both are detectable. Aggregating explicitly specified
+baseline contexts by *maximum observed* sensitivity (rather than
+silently treating unmeasured pairs as zeros) recovers both known
+parents in this controlled example. Using a maximum over carefully
+selected histories would be a biased diagnostic on real data.
+
+The XOR mechanism additionally shows that unsigned KL cannot tell
+whether an action increases or decreases another agent's action
+logit: direction `j -> i` refers to who is conditioned on whom, not
+the sign of the conditional effect.
+
+An observation-only `PairwisePrecedenceScorer(obs)` necessarily
+returns the SAME priorities for two examples with identical
+observations but different **current** joint action histories. In
+these nonlinear examples, the true *conditional sensitivity* changes.
+Thus no observation-only scorer can encode all such same-step
+history-contingent dependencies, regardless of its capacity. A
+pre-decision ordering can only estimate an expected/aggregated
+priority over plausible yet-unknown same-step actions, perhaps
+conditioning on a history summary from previous timesteps.
+
+**Implication for simple, efficient MAT Decoder research:**
+preserve the light low-rank `O(N^2 r)` precedence scorer as a
+pre-decision *expected* ordering candidate; do not add expensive
+counterfactual KL queries to every PPO rollout step or claim that
+a scalar edge captures multi-parent synergies. Model truly
+higher-order same-step effects only if controlled performance tests
+justify the extra complexity. No graph-structured parallel decoder
+has been activated.
+
+The action-history oracle also verifies dynamically restricted legal
+action sets: if the only activating action is illegal, a measured
+KL of zero cannot exclude a structural parent, and a singleton
+target legal-action set is marked **unknown**. Counterfactual chunks
+with no measurable successors are now skipped before any Decoder call.
+A held-out, fixed-seed 64-context AND test compares KL detection
+to the known context-specific sensitivity truth.
+
 ### Topological-layer parallelism: not yet implemented
 
 The original masked self-attention decoder does **not** automatically
@@ -250,6 +308,10 @@ claiming a speedup.
   `tests/test_heldout_oracle_benchmark.py`:
   reproducible held-out directed-graph sensitivity metrics, separate
   confidence-threshold calibration and explicitly failing OOD rule test.
+- `research/dependency_decoder/nonlinear_history_oracle.py` and
+  `tests/test_nonlinear_history_oracle.py`:
+  AND/XOR multi-parent conditional policy, dynamic legal masks,
+  history-conditioned identifiability, and fixed-seed action contexts.
 - `mat/algorithms/mat/algorithm/ma_transformer.py`,
   `mat/algorithms/mat/algorithm/transformer_policy.py`,
   `mat/utils/shared_buffer.py`, `mat/algorithms/mat/mat_trainer.py`,
@@ -272,12 +334,12 @@ claiming a speedup.
 1. Keep the low-rank scorer isolated; compare it with the previous
    pair-MLP scoring implementation on synthetic known relationships
    (parameter count, ranking accuracy, inference overhead).
-2. Basic held-out DAG recovery, confidence calibration and one
-   deliberately opposite-rule failure control are now implemented.
-   Next evaluate more diverse dependency mechanisms, stochastic
-   history/action distributions, partial legal-action support, and
-   calibration transfer. A scalar priority rule is not sufficient
-   scientific evidence for actual SMAC decision influence.
+2. Basic held-out DAG recovery and calibration, an opposite-rule
+   failure control, and AND/XOR action-history interaction checks are
+   implemented. Next quantify average-vs-max sensitivity tradeoffs
+   under **on-policy** history distributions, legal-mask shifts and
+   held-out higher-order mechanisms. Do not claim that an observation-only
+   scorer can predict every current-action-conditional dependency.
 3. Define a training/evaluation protocol before integrating the
    learned graph. Add scorer freeze boundaries and an explicit stored
    permutation regression across scorer-weight changes.
