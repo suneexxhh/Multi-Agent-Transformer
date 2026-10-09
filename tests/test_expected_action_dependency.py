@@ -117,6 +117,8 @@ class TestExpectedActionDependency(unittest.TestCase):
         a, av = probe_action_histories(
             decoder, rep, obs, histories, legal,
             max_context_batch=1, max_counterfactual_batch=3)
+        self.assertLessEqual(max(decoder.forward_calls), 3)
+        decoder.forward_calls.clear()
         b, bv = probe_action_histories(
             decoder, rep, obs, histories, legal,
             max_context_batch=8, max_counterfactual_batch=128)
@@ -128,6 +130,28 @@ class TestExpectedActionDependency(unittest.TestCase):
         scaled = expected_dependency(a, av, weights * 9)
         for lhs, rhs in zip(estimate, scaled):
             self.assertTrue(torch.allclose(lhs, rhs, atol=1e-6))
+
+    def test_rare_dependency_is_not_an_average_or_max_equivalence(self):
+        # Under exactly the same toy AND decoder, a rare activating
+        # history (2% mass) has high KL but low *expected* KL. Maximum
+        # observed KL would overstate typical dependence.
+        rep, obs, legal = setup()
+        decoder = TwoParentInteractionDecoder("and").eval()
+        histories = torch.zeros(2, 1, 3, 1, dtype=torch.long)
+        histories[1, 0, 1] = 2
+        scores, valid = probe_action_histories(
+            decoder, rep, obs, histories, legal)
+        mean, coverage, ess = expected_dependency(
+            scores, valid, torch.tensor([[0.98], [0.02]]))
+        maximum = scores[:, 0, 0, 2].max()
+        self.assertGreater(maximum.item(), 0.1)
+        self.assertTrue(torch.allclose(mean[0, 0, 2],
+                                       0.02 * maximum, atol=1e-6))
+        self.assertGreater(maximum.item() / mean[0, 0, 2].item(), 49.)
+        self.assertAlmostEqual(coverage[0, 0, 2].item(), 1.0)
+        self.assertLess(ess[0, 0, 2].item(), 1.1)
+        print("EXPECTED_AND_RARE mass=0.02 "
+              "max_to_expected_ratio=50.0 low_ESS=PASS", flush=True)
 
     def test_all_missing_is_unknown_and_reject_bad_input(self):
         scores = torch.zeros(3, 2, 3, 3)
