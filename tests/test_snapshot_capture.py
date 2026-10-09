@@ -8,7 +8,9 @@ import torch
 
 from mat.algorithms.mat.algorithm.ma_transformer import MultiAgentTransformer
 from research.dependency_decoder.checkpoint_diagnostic import run_diagnostic
-from research.dependency_decoder.snapshot_capture import save_snapshot_and_checkpoint
+from research.dependency_decoder.snapshot_capture import (
+    save_snapshot_and_checkpoint, MultiContextCapture,
+)
 
 
 class TestMATSnapshotCapture(unittest.TestCase):
@@ -46,6 +48,62 @@ class TestMATSnapshotCapture(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 save_snapshot_and_checkpoint(model, obs, legal, order,
                                              directory, "MAT_obs_norm_seed1_trial")
+
+    def test_two_frozen_stages_with_four_contexts_each(self):
+        with tempfile.TemporaryDirectory() as directory:
+            model, obs, legal, order = self.setup_snapshot()
+            first_weight = next(model.parameters()).detach().clone()
+            for episode in (1, 10):
+                collector = MultiContextCapture(steps=(0, 10, 20, 30))
+                with self.assertRaises(ValueError):
+                    collector.save(model, directory, "MAT_early", episode)
+                for step in (0, 10, 20, 30):
+                    current = obs + step * 0.0003 + episode * 0.0005
+                    self.assertTrue(collector.observe(step, current, legal, order))
+                    if step == 0:
+                        # The collector owns copies, not mutable rollout views.
+                        current[:, :, :] = -999
+                self.assertTrue(collector.complete)
+                with self.assertRaises(ValueError):
+                    collector.observe(0, obs, legal, order)
+                prefix = f"MAT_obs_norm_seed1_ep{episode:04d}"
+                snapshot, checkpoint = collector.save(
+                    model, directory, prefix, episode)
+                with np.load(snapshot, allow_pickle=False) as source:
+                    self.assertEqual(source["obs"].shape, (4, 3, 7))
+                    self.assertEqual(source["agent_order"].shape, (4, 3))
+                    self.assertEqual(source["context_step"].tolist(), [0, 10, 20, 30])
+                    self.assertEqual(source["context_episode"].tolist(), [episode]*4)
+                    self.assertFalse((source["obs"] == -999).any())
+                stats = run_diagnostic(
+                    checkpoint, snapshot, 1, 8, 1,
+                    num_histories=3, max_context_batch=2,
+                    max_counterfactual_batch=4, seed=1)
+                self.assertEqual(stats["snapshot_contexts"], 4)
+                self.assertEqual(stats["context_step"], [0, 10, 20, 30])
+                self.assertEqual(stats["context_episode"], [episode]*4)
+                self.assertEqual(len(stats["mean_kl_by_context"]), 4)
+                self.assertEqual(len(stats["observable_pairs_by_context"]), 4)
+                self.assertLess(stats["max_sampling_likelihood_error"], 2e-5)
+                with torch.no_grad():
+                    for parameter in model.parameters():
+                        parameter.add_(0.001)
+            self.assertFalse(torch.equal(first_weight, next(model.parameters())))
+            self.assertEqual(len(list(Path(directory).glob("*_snapshot.npz"))), 2)
+            self.assertEqual(len(list(Path(directory).glob("*_transformer.pt"))), 2)
+
+    def test_multicontext_guardrails(self):
+        for steps in ((), (0, 0), (10, 0), (-1,), tuple(range(17))):
+            with self.subTest(steps=steps):
+                with self.assertRaises(ValueError):
+                    MultiContextCapture(steps)
+        collector = MultiContextCapture((0, 1))
+        model, obs, legal, order = self.setup_snapshot()
+        collector.observe(0, obs, legal, order)
+        self.assertFalse(collector.complete)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):
+                collector.save(model, directory, "MAT_incomplete", 1)
 
     def test_fail_closed_if_model_training_or_agent_order_invalid(self):
         with tempfile.TemporaryDirectory() as directory:
