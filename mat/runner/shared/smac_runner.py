@@ -32,14 +32,19 @@ class SMACRunner(Runner):
 
             for step in range(self.episode_length):
                 # Sample actions
-                values, actions, action_log_probs, rnn_states, rnn_states_critic = self.collect(step)
+                collection = self.collect(step)
+                if self.buffer.agent_orders is not None:
+                    values, actions, action_log_probs, rnn_states, rnn_states_critic, agent_orders = collection
+                else:
+                    values, actions, action_log_probs, rnn_states, rnn_states_critic = collection
                     
                 # Obser reward and next obs
                 obs, share_obs, rewards, dones, infos, available_actions = self.envs.step(actions)
 
-                data = obs, share_obs, rewards, dones, infos, available_actions, \
-                       values, actions, action_log_probs, \
-                       rnn_states, rnn_states_critic 
+                data = (obs, share_obs, rewards, dones, infos, available_actions,
+                        values, actions, action_log_probs, rnn_states, rnn_states_critic)
+                if self.buffer.agent_orders is not None:
+                    data += (agent_orders,)
                 
                 # insert data into buffer
                 self.insert(data)
@@ -113,13 +118,18 @@ class SMACRunner(Runner):
     @torch.no_grad()
     def collect(self, step):
         self.trainer.prep_rollout()
-        value, action, action_log_prob, rnn_state, rnn_state_critic \
-            = self.trainer.policy.get_actions(np.concatenate(self.buffer.share_obs[step]),
-                                            np.concatenate(self.buffer.obs[step]),
-                                            np.concatenate(self.buffer.rnn_states[step]),
-                                            np.concatenate(self.buffer.rnn_states_critic[step]),
-                                            np.concatenate(self.buffer.masks[step]),
-                                            np.concatenate(self.buffer.available_actions[step]))
+        collected = self.trainer.policy.get_actions(
+            np.concatenate(self.buffer.share_obs[step]),
+            np.concatenate(self.buffer.obs[step]),
+            np.concatenate(self.buffer.rnn_states[step]),
+            np.concatenate(self.buffer.rnn_states_critic[step]),
+            np.concatenate(self.buffer.masks[step]),
+            np.concatenate(self.buffer.available_actions[step]),
+            return_agent_order=self.buffer.agent_orders is not None)
+        if self.buffer.agent_orders is not None:
+            value, action, action_log_prob, rnn_state, rnn_state_critic, stored_order = collected
+        else:
+            value, action, action_log_prob, rnn_state, rnn_state_critic = collected
         # [self.envs, agents, dim]
         values = np.array(np.split(_t2n(value), self.n_rollout_threads))
         actions = np.array(np.split(_t2n(action), self.n_rollout_threads))
@@ -127,11 +137,22 @@ class SMACRunner(Runner):
         rnn_states = np.array(np.split(_t2n(rnn_state), self.n_rollout_threads))
         rnn_states_critic = np.array(np.split(_t2n(rnn_state_critic), self.n_rollout_threads))
 
+        if self.buffer.agent_orders is not None:
+            orders = _t2n(stored_order)
+            if orders.shape != (self.n_rollout_threads, self.num_agents):
+                raise ValueError("unexpected per-environment agent order shape")
+            return values, actions, action_log_probs, rnn_states, rnn_states_critic, orders
         return values, actions, action_log_probs, rnn_states, rnn_states_critic
 
     def insert(self, data):
+        if len(data) == 12:
+            *usual_data, agent_orders = data
+        elif len(data) == 11:
+            usual_data, agent_orders = data, None
+        else:
+            raise ValueError("unexpected SMAC rollout tuple")
         obs, share_obs, rewards, dones, infos, available_actions, \
-        values, actions, action_log_probs, rnn_states, rnn_states_critic = data
+        values, actions, action_log_probs, rnn_states, rnn_states_critic = usual_data
 
         dones_env = np.all(dones, axis=1)
 
@@ -151,7 +172,8 @@ class SMACRunner(Runner):
             share_obs = obs
 
         self.buffer.insert(share_obs, obs, rnn_states, rnn_states_critic,
-                           actions, action_log_probs, values, rewards, masks, bad_masks, active_masks, available_actions)
+                           actions, action_log_probs, values, rewards, masks, bad_masks,
+                           active_masks, available_actions, agent_orders=agent_orders)
 
     def log_train(self, train_infos, total_num_steps):
         train_infos["average_step_rewards"] = np.mean(self.buffer.rewards)
