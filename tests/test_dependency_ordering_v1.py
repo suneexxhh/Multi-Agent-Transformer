@@ -112,6 +112,27 @@ class TestPairwisePrecedenceScorer(unittest.TestCase):
             with self.assertRaises(ValueError):
                 m.precedence_dag(obs, threshold=invalid)
 
+    def test_external_oracle_supervision_reduces_pairwise_bce(self):
+        # A synthetic *known priority* oracle, NOT an environment causal test.
+        torch.manual_seed(508)
+        m = PairwisePrecedenceScorer(obs_dim=1, hidden_dim=2)
+        x = torch.tensor([[[2.], [0.], [-2.]],
+                          [[-2.], [2.], [0.]],
+                          [[1.], [-3.], [2.]]])
+        target = (x[:, :, 0].unsqueeze(2) >
+                  x[:, :, 0].unsqueeze(1)).float()
+        optimizer = torch.optim.Adam(m.parameters(), lr=0.07)
+        initial = m.supervised_loss(x, target).item()
+        for _ in range(50):
+            optimizer.zero_grad()
+            loss = m.supervised_loss(x, target)
+            loss.backward()
+            optimizer.step()
+        final = m.supervised_loss(x, target).item()
+        self.assertLess(final, initial * 0.4)
+        self.assertTrue(torch.equal(
+            m.order(x), torch.argsort(x[..., 0], dim=1, descending=True)))
+
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA not available")
     def test_cuda_forward_and_order(self):
         m = PairwisePrecedenceScorer(obs_dim=5).cuda()
