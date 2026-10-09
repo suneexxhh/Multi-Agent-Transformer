@@ -309,6 +309,83 @@ predeclared numerical noise floor and confidence criteria, and
 matched-seed win-rate/compute comparisons if graph ordering is
 eventually enabled.
 
+## Archived SMAC total-variation cross-check — 2026-10-09
+
+[Private read-only CPU replay #37922349103](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37922349103)
+passed with no SC2 startup or GPU use. Download its
+[diagnostic artifact #11612103186](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37922349103/artifacts/11612103186)
+for the stage-level JSON and exact-provenance comparison.
+
+The addition to `action_influence_probe.py` derives BOTH KL and
+total variation (TV) from the **same decoder logits and legal
+action masks**, without another decoder pass:
+
+```text
+TV(p,q) = 1/2 * sum_{a in legal} |p(a)-q(a)|
+Pinsker: 2 * TV(p,q)^2 <= KL(p||q)
+```
+
+The reductions take place after the ordinary float32 Decoder
+forward, in float64; the scores are aggregated over the same
+legal action alternatives and sampled histories, and are reported
+in the original agent-ID axes.
+
+| Archived checkpoint | mean TV, H=8 | mean TV, H=64 | mean KL, H=64 |
+| --- | ---: | ---: | ---: |
+| Episode index 1 (very early) | 2.4488653593834897e-07 | 2.464694546233659e-07 | 1.934263838508643e-13 |
+| Episode index 10 (early) | 5.722741889258032e-07 | 5.590754881268367e-07 | 9.97297622089277e-13 |
+
+The maximum observed Pinsker excess in the aggregated per-pair
+reports was `0.0`. The earlier identical-H=8 KL values and joint
+sample log-probability checks remained unchanged; extra TV was
+computed without extra Decoder calls.
+
+**Interpretation boundary.** TV of order `10^-7` on these two
+lightly trained checkpoints is a very small conditional change
+in the *policy's* legal action probabilities. The result says
+nothing decisive about actual cooperation, optimal behavior,
+environment causality, or the capabilities of a fully trained
+MAT policy. Satisfying Pinsker checks internal mathematical
+consistency but does not establish statistical significance;
+the underlying policy logits were still computed in float32.
+The sampling runs have only four observation contexts per
+checkpoint and one training seed. Do **not** construct synthetic
+ground-truth dependency labels from these real-data values.
+
+### Evidence gate before enabling learned Decoder precedence
+
+Keep `learned_precedence` disabled until the following are met:
+
+1. **Sufficiently trained, identified checkpoints.** Record map,
+   seed, full architecture/agent-order configuration, training
+   timestep, reward/win-rate evaluation and checkpoint hash.
+   The accessible public research repository and private smoke
+   artifacts currently contain no verified long-trained checkpoint.
+   This does not rule out separately stored user checkpoints.
+2. **Representative states.** Capture multiple real independent
+   episodes and sufficiently diverse legal-action states, not
+   just four observations from one short rollout. Report measured,
+   unmeasured and singleton-legal-action targets separately.
+3. **Numerical reliability.** Evaluate KL with stable float64
+   reductions, verify the KL–TV inequality and compare against a
+   frozen identical-policy null. Report sensitivity to changes
+   in the action-history sample budget.
+4. **Bidirectional identification and generalization.** A fixed
+   decoder order cannot directly measure the reverse directions;
+   alternate order contexts change the conditional joint policy.
+   Do not equate reverse-order KL with an environment-causal edge.
+   Any precedence supervision must survive held-out
+   context/seed checks and a justified, predeclared signal threshold.
+5. **PPO validity and speed.** When considering deployment, keep
+   rollout orders fixed during PPO replay, explicitly handle
+   ordering-policy probabilities if `rho_phi(sigma|o)` is trained,
+   and evaluate CPU/GPU time, convergence and win rate against
+   matched MAT baselines.
+
+The present gate is **not satisfied**, so the low-rank scorer
+remains standalone. Introducing per-step counterfactual probes into
+MAT rollout would violate the desired minimal compute overhead.
+
 ## Math and interpretation
 
 1. Under a fixed observation, legal mask and stored permutation,
