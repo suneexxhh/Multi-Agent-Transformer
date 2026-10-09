@@ -93,11 +93,11 @@ if (( ACTUAL_ENV_STEPS == 0 )); then
   echo "NUM_ENV_STEPS is too small for one complete rollout batch" >&2
   exit 2
 fi
-if ! [[ "$CLIP_PARAM" =~ ^(0\\.[0-9]+|1\\.0+)$ ]]; then
+if ! [[ "$CLIP_PARAM" =~ ^(0\.[0-9]+|1\.0+)$ ]]; then
   echo "CLIP_PARAM must be a decimal probability in (0,1]" >&2
   exit 2
 fi
-if [[ "$CLIP_PARAM" =~ ^0\\.0+$ ]]; then
+if [[ "$CLIP_PARAM" =~ ^0\.0+$ ]]; then
   echo "CLIP_PARAM must be positive" >&2
   exit 2
 fi
