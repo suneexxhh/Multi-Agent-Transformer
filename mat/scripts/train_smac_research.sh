@@ -46,7 +46,7 @@ export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 cd "$SCRIPT_DIR"
 
 STAMP="$(date +%Y%m%d_%H%M%S)"
-EXP_NAME="${EXP_TAG}_seed${SEED}"
+EXP_NAME="${EXP_TAG}_${AGENT_ORDER_MODE}_orderseed${AGENT_ORDER_SEED}_seed${SEED}"
 LOG_DIR="$SCRIPT_DIR/logs"
 LOG_FILE="$LOG_DIR/${MAP}_${EXP_NAME}_gpu${GPU_ID}_${STAMP}.log"
 
@@ -74,7 +74,7 @@ args=(
 echo "MAT Decoder Auto Research / original Encoder-Critic baseline"
 printf 'map=%s gpu=%s seed=%s steps=%s ppo_epoch=%s clip=%s\n' \
   "$MAP" "$GPU_ID" "$SEED" "$NUM_ENV_STEPS" "$PPO_EPOCH" "$CLIP_PARAM"
-printf 'repository_root=%s\nlog_file=%s\n' "$REPO_ROOT" "$LOG_FILE"
+printf 'agent_order_mode=%s agent_order_seed=%s\n' "$AGENT_ORDER_MODE" "$AGENT_ORDER_SEED"\nprintf 'repository_root=%s\nlog_file=%s\n' "$REPO_ROOT" "$LOG_FILE"
 printf 'command: CUDA_VISIBLE_DEVICES=%q %q -u train/train_smac.py ' "$GPU_ID" "$PYTHON_BIN"
 printf '%q ' "${args[@]}"
 printf '\n'
