@@ -81,7 +81,10 @@ def legal_action_kl_probe(decoder, obs_rep, obs, actions,
         target_variable = legal.sum(-1) > 1
         valid[:, :-1] = ((counts.unsqueeze(-1) > 0) & later &
                          target_variable.unsqueeze(1))
-        if torch.any(counts):
+        # Do not evaluate perturbations that cannot affect any
+        # *measurable* successor in the current ordering/context.
+        candidate = candidate & valid[:, :-1].any(-1).unsqueeze(-1)
+        if torch.any(candidate):
             shift = obs_rep.new_zeros((b, n, a + 1))
             shift[:, 0, 0] = 1
             shift[:, 1:, 1:] = F.one_hot(
