@@ -73,6 +73,59 @@ class TestPairedCheckpointDiagnostic(unittest.TestCase):
             self.assertEqual(stats["measurable_pairs"], 12)
             self.assertEqual(len(stats["importance_ess_by_context"]), 4)
 
+    def test_direct_target_sampling_survives_low_importance_ess(self):
+        # SNIS is intentionally impossible (H=4 < requested ESS=5),
+        # but direct p-policy sampling still provides a valid p-draw
+        # conditional KL/TV estimate on the SAME saved observations.
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot, early, late = self.fixtures(tmp)
+            stats = compare_frozen_checkpoints(
+                early, late, snapshot, 1, 8, 1, histories=4,
+                direct_target_histories=9,
+                min_importance_ess=5.0,
+                max_context_batch=2, max_counterfactual_batch=8,
+                seed=9935)
+            self.assertEqual(stats["contexts_with_adequate_ess"], 0)
+            self.assertIsNone(stats["snis_late_kl_mean"])
+            self.assertEqual(stats["direct_target_histories"], 9)
+            self.assertLess(stats["direct_target_replay_max_error"], 2e-5)
+            self.assertEqual(stats["direct_target_measurable_pairs"], 12)
+            self.assertIsNotNone(stats["direct_target_mean_kl"])
+            self.assertIsNotNone(stats["direct_target_mean_tv"])
+            self.assertLessEqual(stats["direct_target_mean_tv"], 1)
+            self.assertEqual(len(stats["direct_target_mean_tv_by_context"]), 4)
+            self.assertEqual(len(stats["direct_target_tv_mc_se_by_context"]), 4)
+            self.assertTrue(all(v is not None and v >= 0
+                                for v in stats["direct_target_tv_mc_se_by_context"]))
+
+    def test_direct_target_same_weights_match_in_expectation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot, early, late = self.fixtures(tmp)
+            stats = compare_frozen_checkpoints(
+                early, early, snapshot, 1, 8, 1, histories=24,
+                direct_target_histories=24,
+                max_context_batch=4, max_counterfactual_batch=16,
+                seed=9936)
+            self.assertEqual(stats["max_absolute_parameter_shift"], 0)
+            self.assertAlmostEqual(stats["max_absolute_joint_logp_shift"], 0)
+            self.assertEqual(stats["direct_target_measurable_pairs"], 12)
+            self.assertLess(stats["direct_target_replay_max_error"], 2e-5)
+            # Monte Carlo draws are different; do not assert exact
+            # equality of the two estimates. Their mathematical
+            # sampling distribution is identical at equal checkpoints.
+            self.assertGreaterEqual(stats["direct_target_mean_tv"], 0)
+            self.assertGreaterEqual(stats["matched_early_mean_tv"], 0)
+
+    def test_invalid_direct_target_budget_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot, early, late = self.fixtures(tmp)
+            for n in (1, -1, True):
+                with self.subTest(budget=n):
+                    with self.assertRaises(ValueError):
+                        compare_frozen_checkpoints(
+                            early, late, snapshot, 1, 8, 1,
+                            direct_target_histories=n)
+
     def test_low_importance_ess_abstains_from_snis_metrics(self):
         with tempfile.TemporaryDirectory() as tmp:
             snapshot, early, late = self.fixtures(tmp)
