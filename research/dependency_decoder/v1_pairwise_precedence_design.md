@@ -278,6 +278,69 @@ with no measurable successors are now skipped before any Decoder call.
 A held-out, fixed-seed 64-context AND test compares KL detection
 to the known context-specific sensitivity truth.
 
+### Offline expected dependency under an explicit action-history distribution
+
+A new **standalone, non-training** module is implemented in
+`research/dependency_decoder/expected_action_dependency.py`.
+It addresses the nonlinear AND counterexample: the conditional KL
+`C_(j->i)(h,o,sigma)` may be exactly zero for common histories even
+when a different legal action history reveals a strong dependency.
+
+Given a set of **explicitly sampled or enumerated** histories
+`h=1..H`, user-supplied nonnegative relative weights `w_h`,
+and a pairwise identifiability mask `m_hji`, compute:
+
+```text
+M_ji = (sum_h w_h m_hji) / (sum_h w_h)
+Cbar_ji = (sum_h w_h m_hji C_hji) / (sum_h w_h m_hji)
+ESS_ji = (sum_h w_h m_hji)^2 / (sum_h w_h^2 m_hji)
+```
+
+All three outputs are `[B,N,N]`: conditional measured-history mean,
+history-coverage mass, and Kish effective sample size. When
+`M_ji=0`, the displayed zero is a **placeholder**, not an estimate
+of no dependency. The conditional mean is NOT the unconditional
+expectation when histories can be unidentifiable; the missing part
+of the history distribution is not imputed. ESS describes weight
+concentration, not a guaranteed confidence interval.
+
+The history weights are ONLY a user-specified distribution. These
+routines do **not** create on-policy samples, estimate importance
+ratios, or assume all histories are equally likely. If a new policy
+changes its action distribution, yesterday's weights cannot be
+reused as if the history distribution were stationary. If `w_h`
+does not represent a known target distribution, `Cbar` is simply
+a descriptive weighted summary, not a policy expectation.
+
+The module's `probe_action_histories` evaluates the original
+`legal_action_kl_probe` across `[H,B,N,1]` action contexts while
+bounding each repeated encoder-feature batch by
+`max_context_batch` and counterfactual batch by
+`max_counterfactual_batch`. It only runs offline, not once per
+PPO rollout step. `reliable_precedence_targets` exposes optional
+**pseudo-labels** only when BOTH directed measurements satisfy
+`M >= min_coverage`, `ESS >= min_ess`, and exceed the expected
+KL margin. Comparing different ordering-conditional policies remains
+a confound, so these labels are not automatically valid on SMAC.
+
+The fixed AND synthetic test uses two explicit histories where
+`a_1=2` occurs with probabilities 0.1, 0.5 and 0.9. Expected
+`0 -> 2` conditional policy sensitivity increases with this
+probability; the original observations are identical. Another
+test checks that 98% mass on an inactive context makes the
+weighted **expected** KL exactly one-fiftieth of the maximum
+observed KL. This is why *max-over-selected histories* is not
+an unbiased replacement for an expected decision dependency.
+
+**Research decision:** keep the low-rank scorer unchanged until
+we have a reproducible sampling distribution (or a defensible,
+frozen behavior-policy snapshot) and held-out calibration across
+different conditional action-history distributions. Future
+`P_phi(i before j | obs)` should approximate a *pre-decision*
+expected priority rather than pretend it knows yet-unexecuted
+current-step actions. Nothing here implements learned graph PPO
+or graph-parallel autoregressive factorization.
+
 ### Topological-layer parallelism: not yet implemented
 
 The original masked self-attention decoder does **not** automatically
@@ -312,6 +375,11 @@ claiming a speedup.
   `tests/test_nonlinear_history_oracle.py`:
   AND/XOR multi-parent conditional policy, dynamic legal masks,
   history-conditioned identifiability, and fixed-seed action contexts.
+- `research/dependency_decoder/expected_action_dependency.py` and
+  `tests/test_expected_action_dependency.py`:
+  offline bounded history batches, weighted conditional KL mean,
+  coverage mass, ESS, conservative reliability gates, rare-event
+  maximum-KL negative control and no PPO integration.
 - `mat/algorithms/mat/algorithm/ma_transformer.py`,
   `mat/algorithms/mat/algorithm/transformer_policy.py`,
   `mat/utils/shared_buffer.py`, `mat/algorithms/mat/mat_trainer.py`,
@@ -334,12 +402,13 @@ claiming a speedup.
 1. Keep the low-rank scorer isolated; compare it with the previous
    pair-MLP scoring implementation on synthetic known relationships
    (parameter count, ranking accuracy, inference overhead).
-2. Basic held-out DAG recovery and calibration, an opposite-rule
-   failure control, and AND/XOR action-history interaction checks are
-   implemented. Next quantify average-vs-max sensitivity tradeoffs
-   under **on-policy** history distributions, legal-mask shifts and
-   held-out higher-order mechanisms. Do not claim that an observation-only
-   scorer can predict every current-action-conditional dependency.
+2. Basic held-out graph calibration, an opposite-rule
+   failure control, AND/XOR nonlinear interactions, and distribution-
+   weighted history aggregation are implemented offline. Next define
+   a realistic sampled/frozen behavior-policy distribution, measure
+   uncertainty and coverage under legal-mask shifts and evaluate
+   actual distribution transfer. A static pre-decision scorer
+   cannot observe still-unknown same-step actions.
 3. Define a training/evaluation protocol before integrating the
    learned graph. Add scorer freeze boundaries and an explicit stored
    permutation regression across scorer-weight changes.
