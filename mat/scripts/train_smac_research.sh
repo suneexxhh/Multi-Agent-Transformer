@@ -84,7 +84,7 @@ if [[ "$DRY_RUN" != "1" ]]; then
     echo "ERROR: Python not found in Conda environment: $PYTHON_BIN" >&2
     exit 2
   fi
-  printf 'active_conda_env=%s python=%s\\n' "$CONDA_DEFAULT_ENV" "$PYTHON_BIN"
+  printf 'active_conda_env=%s python=%s\n' "$CONDA_DEFAULT_ENV" "$PYTHON_BIN"
 fi
 
 STAMP="$(date +%Y%m%d_%H%M%S)"
