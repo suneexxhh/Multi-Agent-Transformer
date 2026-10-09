@@ -75,7 +75,12 @@ def legal_action_kl_probe(decoder, obs_rep, obs, actions,
         counts = candidate.sum(-1)  # [B,N-1]
         later = (torch.arange(n, device=obs.device)[None, None, :] >
                  torch.arange(n - 1, device=obs.device)[None, :, None])
-        valid[:, :-1] = (counts.unsqueeze(-1) > 0) & later
+        # A successor with only one legal action has a point-mass policy:
+        # no action intervention can change its legal distribution.
+        # Such a pair is UNIDENTIFIABLE rather than measured-zero.
+        target_variable = legal.sum(-1) > 1
+        valid[:, :-1] = ((counts.unsqueeze(-1) > 0) & later &
+                         target_variable.unsqueeze(1))
         if torch.any(counts):
             shift = obs_rep.new_zeros((b, n, a + 1))
             shift[:, 0, 0] = 1
