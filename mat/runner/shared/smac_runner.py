@@ -38,6 +38,27 @@ class SMACRunner(Runner):
                 else:
                     values, actions, action_log_probs, rnn_states, rnn_states_critic = collection
                     
+                # Save a single aligned, pre-action rollout context and
+                # matching frozen weights, only when explicitly enabled.
+                if (episode == 1 and step == 0 and
+                        getattr(self.all_args, "decoder_diag_capture_dir", None)):
+                    if self.buffer.agent_orders is None:
+                        raise ValueError("diagnostic capture requires --store_agent_orders")
+                    from research.dependency_decoder.snapshot_capture import (
+                        save_snapshot_and_checkpoint,
+                    )
+                    diag_id = getattr(self.all_args, "decoder_diag_capture_id", None)
+                    if not diag_id:
+                        raise ValueError("diagnostic capture requires --decoder_diag_capture_id")
+                    snap, checkpoint = save_snapshot_and_checkpoint(
+                        self.trainer.policy.transformer,
+                        self.buffer.obs[step].copy(),
+                        self.buffer.available_actions[step].copy(),
+                        agent_orders, self.all_args.decoder_diag_capture_dir,
+                        diag_id)
+                    print(f"MAT_DECODER_DIAG_SNAPSHOT={snap}")
+                    print(f"MAT_DECODER_DIAG_CHECKPOINT={checkpoint}")
+
                 # Obser reward and next obs
                 obs, share_obs, rewards, dones, infos, available_actions = self.envs.step(actions)
 
