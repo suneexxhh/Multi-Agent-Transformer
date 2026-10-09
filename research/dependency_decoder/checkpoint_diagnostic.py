@@ -100,6 +100,16 @@ def run_diagnostic(checkpoint, snapshot, n_block, n_embd, n_head,
     offdiag = ~torch.eye(n, dtype=torch.bool).unsqueeze(0)
     measured = (coverage > 0) & offdiag
     pairs = int(measured.sum())
+    count_by_context = measured.sum(dim=(1, 2))
+    mean_by_context = (estimate * measured).sum(dim=(1, 2)) / count_by_context.clamp_min(1)
+    with np.load(str(snapshot), allow_pickle=False) as source:
+        context_step = (source["context_step"].tolist()
+                        if "context_step" in source else None)
+        context_episode = (source["context_episode"].tolist()
+                           if "context_episode" in source else None)
+    if context_step is not None and (len(context_step) != b or
+                                     len(context_episode) != b):
+        raise ValueError("invalid context provenance lengths")
     bidirectional = measured & measured.transpose(-1, -2)
     return dict(
         diagnostic_only=True, trained_smac_performance_claim=False,
@@ -107,6 +117,10 @@ def run_diagnostic(checkpoint, snapshot, n_block, n_embd, n_head,
         n_agents=n, obs_dim=obs_dim, action_dim=act_dim,
         architecture=dict(n_block=n_block, n_embd=n_embd, n_head=n_head),
         snapshot_contexts=b, sampled_histories=num_histories,
+        context_step=context_step, context_episode=context_episode,
+        observable_pairs_by_context=[int(x) for x in count_by_context.tolist()],
+        mean_kl_by_context=[float(value) if int(count_by_context[i]) else None
+                            for i, value in enumerate(mean_by_context)],
         sampled_joint_logp_mean=float(sampled_joint_lp.mean()),
         max_sampling_likelihood_error=maximum_lp_error,
         observable_directed_pairs=pairs,
