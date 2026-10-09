@@ -1,5 +1,6 @@
 """Controlled causal-mask *policy sensitivity* tests; no environmental causality."""
 import unittest
+import math
 
 import torch
 from torch import nn
@@ -185,6 +186,40 @@ class TestActionInfluenceProbe(unittest.TestCase):
         self.assertEqual(decoder.forward_calls, [2, 3, 3, 2])
         self.assertTrue(valid[:, 0, 2].all().item())
         self.assertTrue((scores[:, 0, 2] > 0.25).all().item())
+
+    def test_sub_float32_precision_kl_has_analytic_value(self):
+        # A one-logit perturbation of 1e-4 has binary KL
+        # log(cosh(1e-4/2)) ~ 1.25e-9. Pure float32
+        # log_softmax subtraction can report spurious zero/negative KL.
+        class TinyDecoder(nn.Module):
+            def forward(self, shifted, rep, obs):
+                b, n, dim = shifted.shape
+                self_dim = 2
+                if n != 2 or dim != 3:
+                    raise ValueError("expected 2 agents, 2 legal actions")
+                logits = shifted.new_zeros((b, n, self_dim))
+                logits[:, 1, 1] = 1e-4 * shifted[:, 1, 2]
+                return logits
+
+        decoder = TinyDecoder().eval()
+        rep = torch.zeros(1, 2, 3, dtype=torch.float32)
+        obs = torch.zeros(1, 2, 4, dtype=torch.float32)
+        actions = torch.zeros(1, 2, 1, dtype=torch.long)
+        legal = torch.ones(1, 2, 2)
+        scores, valid = legal_action_kl_probe(
+            decoder, rep, obs, actions, legal, return_valid=True)
+        expected = math.log(math.cosh(0.0001 / 2))
+        self.assertTrue(valid[0, 0, 1].item())
+        self.assertGreater(scores[0, 0, 1].item(), 1e-9)
+        self.assertAlmostEqual(scores[0, 0, 1].item(),
+                               expected, delta=4e-12)
+        self.assertTrue(torch.isfinite(scores).all())
+        legal[:, 1] = torch.tensor([1., 0.])
+        masked, coverage = legal_action_kl_probe(
+            decoder, rep, obs, actions, legal, return_valid=True)
+        self.assertTrue(torch.isfinite(masked).all())
+        self.assertFalse(coverage[0, 0, 1].item())
+        self.assertEqual(masked[0, 0, 1].item(), 0.0)
 
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA not available")
     def test_cuda_probe(self):
