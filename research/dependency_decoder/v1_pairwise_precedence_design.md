@@ -1,6 +1,10 @@
 # AR-04 (V1 scaffold) — Directed Pairwise Agent Precedence
 
-**Status: scorer + independent tests only; NOT yet wired to PPO or any live SMAC training.**
+**Status:** V1 pairwise scorer remains *isolated* and untrained. A separate,
+opt-in stored-order transport path is now connected across SMAC rollouts,
+Replay Buffer, MAT sampling/evaluation, and PPO Trainer. This opt-in path
+has NOT yet been validated with real GPU training; it does not turn on a
+learned scorer or claim directed causal dependency inference.
 
 ## Verified foundation
 
@@ -48,28 +52,47 @@ intended clipped PPO objective.
 V0 avoids this by deriving a deterministic order solely from observations
 and a constant seed. V1 does **not** have that guarantee.
 
+## Saved-order infrastructure completed on research branch
+
+- `--store_agent_orders` is opt-in and defaults to false; the unchanged
+  V0 and other benchmark execution paths still use their legacy tuple
+  interfaces. `STORE_AGENT_ORDERS=1` enables the SMAC launcher flag.
+- SMAC Runner collects an original-agent permutation per time/environment
+  transition; `SharedReplayBuffer.agent_orders` stores `int64[T,E,N]`.
+  Validation rejects duplicated, missing, or out-of-range IDs.
+- The minibatch generator pairs each order `[B,N]` with its corresponding
+  `obs`, `actions` and masks. It does **not** shuffle decoder positions as
+  independent experience samples.
+- `TransformerPolicy` and `MATTrainer` forward stored orders to MAT's
+  teacher-forced action log-probability calculation. No scorer re-evaluation
+  occurs in this PPO path. Returned actions and log-probs still use original
+  agent IDs; Encoder and Critic remain untouched.
+- [CPU CI run 37893867478](https://github.com/suneexxhh/Multi-Agent-Transformer/actions/runs/37893867478):
+  26 tests, 23 passed, 3 CUDA-only skipped; includes a trainer spy test
+  confirming the permutation is forwarded unchanged. CPU tests do not prove
+  that an end-to-end GPU SMAC rollout is correct.
+- A bounded GPU 0, SMAC 3m, `new_titans`, 2,000-step test of the opt-in
+  storage transport has been requested in the **private controller**.
+  Its completion should be checked from Issue #1, not assumed successful.
+
 ## Required next engineering milestones
 
-1. Define defensible edge supervision and test it on toy multi-agent
-   problems with known directed decision influence. Cross-agent
-   *policy* sensitivity under action interventions may serve as a proxy,
-   but it does **not** establish environment causal influence.
-2. Extend the rollout buffer to retain `agent_order[B,N]` for each
-   sampled timestep; transport it through mini-batch generators.
-3. Modify `TransformerPolicy.get_actions` and
-   `evaluate_actions` to share the stored order for the PPO update,
-   with no recomputation from changed scorer weights during epochs.
-   Train the scorer at carefully separated update boundaries, or
-   freeze it during policy rollout/update cycles.
-4. Ensure sampled actions, action masks, log-probs, entropy and values
-   are consistently returned by original agent ID. **Do not change the
-   current Encoder/Critic**.
-5. Add a strict regression where scorer weights are changed after
-   rollout; stored-order old/new log-probabilities must remain
-   consistent when the decoder is unchanged.
-6. Only then expose a gated V1 CLI mode and run a single-environment
-   GPU 0 / SMAC `3m` diagnostic. Later evaluate seeds, maps,
-   convergence, and significance with fair matched baselines.
+1. **Still required: trustworthy pairwise supervision.** Define and test
+   edge labels on controlled multi-agent toy domains where directed
+   influence is specified externally. Decoder action sensitivity alone
+   is a proxy for model dependence, **not** environment causation.
+2. **Still required: learned scorer PPO integration.** Add a separately
+   gated `learned_precedence` mode and a freeze/update policy for the
+   scorer. Use the already stored rollout permutation for every PPO
+   minibatch, even after scorer weights change.
+3. **Still required: weight-change regression.** Generate a rollout,
+   deliberately modify the scorer's parameters, and assert the PPO
+   log-probabilities and importance ratios use the original stored
+   ordering while Decoder weights are fixed.
+4. **Still required: empirical validation.** Start with one SMAC env on
+   GPU 0, then matched seeds and evaluation budgets. Win rate,
+   convergence and stability must be measured separately; a 2,000-step
+   smoke test is not a performance result.
 
 ## Safety and scope
 
