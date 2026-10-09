@@ -100,6 +100,34 @@ class TestNonlinearHistoryOracle(unittest.TestCase):
         self.assertFalse(valid[0, 0, 2].item())
         self.assertFalse(valid[0, 1, 2].item())
 
+    def test_random_heldout_action_contexts_match_and_truth(self):
+        # Fixed synthetic oracle, random action histories never seen by
+        # either the scorer or a fitting procedure. A single-pair
+        # intervention is sensitive exactly when the OTHER parent is on.
+        torch.manual_seed(9402)
+        batch = 64
+        ids, obs, legal = fixture(batch=batch)
+        actions = (2 * torch.randint(0, 2, (batch, 3, 1))).long()
+        actions[:, 2] = 0
+        decoder = TwoParentInteractionDecoder("and").eval()
+        scores, mask = legal_action_kl_probe(
+            decoder, ids, obs, actions, legal, return_valid=True,
+            max_counterfactual_batch=19)
+        detected_0 = scores[:, 0, 2] > 1e-4
+        detected_1 = scores[:, 1, 2] > 1e-4
+        truth_0 = actions[:, 1, 0] == 2
+        truth_1 = actions[:, 0, 0] == 2
+        self.assertTrue(torch.equal(detected_0, truth_0))
+        self.assertTrue(torch.equal(detected_1, truth_1))
+        self.assertTrue(mask[:, 0, 2].all().item())
+        self.assertTrue(mask[:, 1, 2].all().item())
+        self.assertFalse((scores[:, 0, 1] > 1e-4).any().item())
+        self.assertTrue(truth_0.any().item() and (~truth_0).any().item())
+        self.assertTrue(truth_1.any().item() and (~truth_1).any().item())
+        print("NONLINEAR_AND_HELDOUT contexts=64"
+              " sensitivity_direction_errors=0 false_pair_alarms=0",
+              flush=True)
+
     def test_deterministic_action_masks_skip_all_decoder_calls(self):
         decoder = TwoParentInteractionDecoder("and").eval()
         ids, obs, _ = fixture(batch=1)
