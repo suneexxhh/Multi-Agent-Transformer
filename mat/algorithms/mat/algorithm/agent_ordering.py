@@ -58,3 +58,20 @@ def restore_agents(tensor, order):
         raise ValueError("Agent and batch dimensions of tensor/order differ")
     index = order.reshape(*order.shape, *((1,) * (tensor.ndim - 2)))
     return torch.zeros_like(tensor).scatter(1, index.expand_as(tensor), tensor)
+
+
+def validate_agent_order(agent_order, batch_size, n_agent, device):
+    """Validate and materialize a stored original-agent permutation [B, N].
+
+    IMPORTANT: never silently repair malformed rollout orders. PPO requires
+    exactly the permutation used when collecting the corresponding actions.
+    """
+    order = torch.as_tensor(agent_order, device=device)
+    if order.dtype != torch.long:
+        raise ValueError("agent_order must use int64/torch.long indices")
+    if order.shape != (batch_size, n_agent):
+        raise ValueError("agent_order must have shape [batch, n_agent]")
+    expected = torch.arange(n_agent, device=device).expand(batch_size, -1)
+    if not torch.equal(torch.sort(order, dim=1).values, expected):
+        raise ValueError("each agent_order row must be a permutation of agent IDs")
+    return order
