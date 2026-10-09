@@ -43,6 +43,9 @@ class SharedReplayBuffer(object):
         self.algo = args.algorithm_name
         self.num_agents = num_agents
         self.env_name = env_name
+        self.store_agent_orders = getattr(args, "store_agent_orders", False)
+        if self.store_agent_orders and (env_name != "StarCraft2" or self.algo != "mat"):
+            raise ValueError("stored-order PPO path is enabled only for SMAC MAT")
 
         obs_shape = get_shape_from_obs_space(obs_space)
         share_obs_shape = get_shape_from_obs_space(cent_obs_space)
@@ -87,10 +90,15 @@ class SharedReplayBuffer(object):
         self.bad_masks = np.ones_like(self.masks)
         self.active_masks = np.ones_like(self.masks)
 
+        self.agent_orders = (
+            np.empty((self.episode_length, self.n_rollout_threads, num_agents), dtype=np.int64)
+            if self.store_agent_orders else None
+        )
         self.step = 0
 
     def insert(self, share_obs, obs, rnn_states_actor, rnn_states_critic, actions, action_log_probs,
-               value_preds, rewards, masks, bad_masks=None, active_masks=None, available_actions=None):
+               value_preds, rewards, masks, bad_masks=None, active_masks=None, available_actions=None,
+               agent_orders=None):
         """
         Insert data into the buffer.
         :param share_obs: (argparse.Namespace) arguments containing relevant model, policy, and env information.
@@ -110,6 +118,18 @@ class SharedReplayBuffer(object):
         self.obs[self.step + 1] = obs.copy()
         self.rnn_states[self.step + 1] = rnn_states_actor.copy()
         self.rnn_states_critic[self.step + 1] = rnn_states_critic.copy()
+        if self.agent_orders is not None:
+            if agent_orders is None:
+                raise ValueError("stored-order rollout requires agent_orders at every step")
+            orders = np.asarray(agent_orders)
+            if orders.dtype != np.int64 or orders.shape != (self.n_rollout_threads, self.num_agents):
+                raise ValueError("agent_orders must be int64 [n_rollout_threads, n_agent]")
+            ids = np.arange(self.num_agents, dtype=np.int64)
+            if not np.array_equal(np.sort(orders, axis=-1), np.broadcast_to(ids, orders.shape)):
+                raise ValueError("each stored agent order must be a valid permutation")
+            self.agent_orders[self.step] = orders
+        elif agent_orders is not None:
+            raise ValueError("agent_orders provided but --store_agent_orders is disabled")
         self.actions[self.step] = actions.copy()
         self.action_log_probs[self.step] = action_log_probs.copy()
         self.value_preds[self.step] = value_preds.copy()
@@ -260,6 +280,9 @@ class SharedReplayBuffer(object):
         action_log_probs = self.action_log_probs.reshape(-1, *self.action_log_probs.shape[2:])
         action_log_probs = action_log_probs[rows, cols]
         advantages = advantages.reshape(-1, *advantages.shape[2:])
+        # One stored original-agent permutation per time/environment sample.
+        agent_orders = (self.agent_orders.reshape(batch_size, num_agents)
+                        if self.agent_orders is not None else None)
         advantages = advantages[rows, cols]
 
         for indices in sampler:
@@ -283,6 +306,11 @@ class SharedReplayBuffer(object):
             else:
                 adv_targ = advantages[indices].reshape(-1, *advantages.shape[2:])
 
-            yield share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch, \
-                  value_preds_batch, return_batch, masks_batch, active_masks_batch, old_action_log_probs_batch, \
-                  adv_targ, available_actions_batch
+            sample = (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch,
+                      actions_batch, value_preds_batch, return_batch, masks_batch,
+                      active_masks_batch, old_action_log_probs_batch, adv_targ,
+                      available_actions_batch)
+            if agent_orders is not None:
+                yield sample + (agent_orders[indices].copy(),)
+            else:
+                yield sample
