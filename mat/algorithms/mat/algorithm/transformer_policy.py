@@ -101,7 +101,7 @@ class TransformerPolicy:
         update_linear_schedule(self.optimizer, episode, episodes, self.lr)
 
     def get_actions(self, cent_obs, obs, rnn_states_actor, rnn_states_critic, masks, available_actions=None,
-                    deterministic=False):
+                    deterministic=False, return_agent_order=False):
         """
         Compute actions and value function predictions for the given inputs.
         :param cent_obs (np.ndarray): centralized input to the critic.
@@ -125,10 +125,16 @@ class TransformerPolicy:
         if available_actions is not None:
             available_actions = available_actions.reshape(-1, self.num_agents, self.act_dim)
 
-        actions, action_log_probs, values = self.transformer.get_actions(cent_obs,
-                                                                         obs,
-                                                                         available_actions,
-                                                                         deterministic)
+        result = self.transformer.get_actions(
+            cent_obs, obs, available_actions, deterministic,
+            return_agent_order=return_agent_order) if (self.algorithm_name == "mat") else self.transformer.get_actions(
+                cent_obs, obs, available_actions, deterministic)
+        if return_agent_order:
+            if self.algorithm_name != "mat":
+                raise ValueError("stored-order rollout is supported only by MAT")
+            actions, action_log_probs, values, stored_agent_order = result
+        else:
+            actions, action_log_probs, values = result
 
         actions = actions.view(-1, self.act_num)
         action_log_probs = action_log_probs.view(-1, self.act_num)
@@ -137,6 +143,8 @@ class TransformerPolicy:
         # unused, just for compatibility
         rnn_states_actor = check(rnn_states_actor).to(**self.tpdv)
         rnn_states_critic = check(rnn_states_critic).to(**self.tpdv)
+        if return_agent_order:
+            return values, actions, action_log_probs, rnn_states_actor, rnn_states_critic, stored_agent_order
         return values, actions, action_log_probs, rnn_states_actor, rnn_states_critic
 
     def get_values(self, cent_obs, obs, rnn_states_critic, masks, available_actions=None):
@@ -161,7 +169,7 @@ class TransformerPolicy:
         return values
 
     def evaluate_actions(self, cent_obs, obs, rnn_states_actor, rnn_states_critic, actions, masks,
-                         available_actions=None, active_masks=None):
+                         available_actions=None, active_masks=None, agent_order=None):
         """
         Get action logprobs / entropy and value function predictions for actor update.
         :param cent_obs (np.ndarray): centralized input to the critic.
@@ -184,7 +192,13 @@ class TransformerPolicy:
         if available_actions is not None:
             available_actions = available_actions.reshape(-1, self.num_agents, self.act_dim)
 
-        action_log_probs, values, entropy = self.transformer(cent_obs, obs, actions, available_actions)
+        if agent_order is not None and self.algorithm_name != "mat":
+            raise ValueError("stored-order PPO evaluation is supported only by MAT")
+        action_log_probs, values, entropy = (
+            self.transformer(cent_obs, obs, actions, available_actions, agent_order=agent_order)
+            if agent_order is not None else
+            self.transformer(cent_obs, obs, actions, available_actions)
+        )
 
         action_log_probs = action_log_probs.view(-1, self.act_num)
         values = values.view(-1, 1)
