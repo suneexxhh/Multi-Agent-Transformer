@@ -99,6 +99,19 @@ def run_diagnostic(checkpoint, snapshot, n_block, n_embd, n_head,
     if maximum_lp_error > 2e-5:
         raise RuntimeError("sampled and teacher-forced log-probabilities disagree")
 
+    # The sampled complete-action negative log-likelihood is an
+    # unbiased Monte Carlo estimate of joint policy entropy at each
+    # fixed observation/mask/order. Reuse already-recorded log-probs:
+    # absolutely NO extra Decoder forward is required.
+    action_nll = -sampled_joint_lp
+    joint_entropy_by_context = action_nll.mean(dim=0)
+    entropy_se = (action_nll.std(dim=0, unbiased=True) /
+                  num_histories ** 0.5) if num_histories > 1 else None
+    # A policy confined to K_j legal actions for each agent has
+    # maximal joint entropy sum_j log(K_j), regardless of agent order.
+    legal_capacity_by_context = (
+        legal.bool().sum(-1).double().log().sum(-1))
+
     start = time.perf_counter()
     sensitivity, valid, variation = probe_action_histories(
         model.decoder, rep, obs, histories, legal, order,
@@ -139,6 +152,18 @@ def run_diagnostic(checkpoint, snapshot, n_block, n_embd, n_head,
         mean_tv_by_context=[float(value) if int(count_by_context[i]) else None
                             for i, value in enumerate(tv_by_context)],
         sampled_joint_logp_mean=float(sampled_joint_lp.mean()),
+        joint_action_entropy_mc_mean_nats=float(joint_entropy_by_context.mean()),
+        joint_action_entropy_mc_nats_by_context=[
+            float(x) for x in joint_entropy_by_context.tolist()],
+        joint_action_entropy_mc_se_nats_by_context=(
+            [float(x) for x in entropy_se.tolist()]
+            if entropy_se is not None else [None] * b),
+        legal_action_entropy_ceiling_nats_by_context=[
+            float(x) for x in legal_capacity_by_context.tolist()],
+        joint_action_entropy_fraction_by_context=[
+            float(joint_entropy_by_context[i] / legal_capacity_by_context[i])
+            if legal_capacity_by_context[i] > 0 else None
+            for i in range(b)],
         max_sampling_likelihood_error=maximum_lp_error,
         observable_directed_pairs=pairs,
         total_directed_pairs=b*n*(n-1),
@@ -154,7 +179,8 @@ def run_diagnostic(checkpoint, snapshot, n_block, n_embd, n_head,
                          likelihood=round(likelihood_s, 6),
                          intervention=round(sensitivity_s, 6)),
         warning=("Only predecessor-to-successor conditional dependencies "
-                 "can be probed under the stored order. This is not "
+                 "can be probed under the stored order. Policy entropy is "
+                 "estimated only by Monte Carlo at fixed states; it is not "
                  "a causal graph, win-rate result, or runtime speedup."),
     )
 
