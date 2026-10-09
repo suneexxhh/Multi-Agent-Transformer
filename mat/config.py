@@ -292,6 +292,11 @@ def get_config():
     parser.add_argument("--n_head", type=int, default=1)
     parser.add_argument("--dec_actor", action='store_true', default=False)
     parser.add_argument("--share_actor", action='store_true', default=False)
+    parser.add_argument("--agent_order_mode", type=str, default="identity",
+                        choices=["identity", "random_fixed", "obs_norm"],
+                        help="V0 MAT decoder order: original, seeded static random, or observation norm priority")
+    parser.add_argument("--agent_order_seed", type=int, default=1,
+                        help="Seed of static random agent order (separate from environment seed)")
 
     # add for online multi-task
     parser.add_argument("--train_maps", type=str, nargs='+', default=None)
