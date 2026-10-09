@@ -63,6 +63,30 @@ export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 # Original MAT entry point expects its working directory to be mat/scripts.
 cd "$SCRIPT_DIR"
 
+# Every real SMAC run uses the explicitly selected Conda environment.
+# Dry runs skip activation so launcher checks also work on CPU CI hosts.
+MAT_CONDA_ENV="${MAT_CONDA_ENV:-new_titans}"
+if [[ "$DRY_RUN" != "1" ]]; then
+  CONDA_SH="${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
+  if [[ ! -f "$CONDA_SH" ]]; then
+    echo "ERROR: Conda initialization script not found: $CONDA_SH" >&2
+    exit 2
+  fi
+  # shellcheck source=/dev/null
+  source "$CONDA_SH"
+  conda activate "$MAT_CONDA_ENV"
+  if [[ "${CONDA_DEFAULT_ENV:-}" != "$MAT_CONDA_ENV" ]]; then
+    echo "ERROR: expected Conda environment $MAT_CONDA_ENV" >&2
+    exit 2
+  fi
+  PYTHON_BIN="$CONDA_PREFIX/bin/python"
+  if [[ ! -x "$PYTHON_BIN" ]]; then
+    echo "ERROR: Python not found in Conda environment: $PYTHON_BIN" >&2
+    exit 2
+  fi
+  printf 'active_conda_env=%s python=%s\\n' "$CONDA_DEFAULT_ENV" "$PYTHON_BIN"
+fi
+
 STAMP="$(date +%Y%m%d_%H%M%S)"
 EXP_NAME="${EXP_TAG}_${AGENT_ORDER_MODE}_orderseed${AGENT_ORDER_SEED}_seed${SEED}"
 LOG_DIR="$SCRIPT_DIR/logs"
