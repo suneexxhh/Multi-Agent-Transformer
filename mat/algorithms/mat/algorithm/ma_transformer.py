@@ -303,7 +303,8 @@ class MultiAgentTransformer(nn.Module):
 
         return action_log, v_loc, entropy
 
-    def get_actions(self, state, obs, available_actions=None, deterministic=False,\n                    agent_order=None, return_agent_order=False):
+    def get_actions(self, state, obs, available_actions=None, deterministic=False,
+                    agent_order=None, return_agent_order=False):
         # state unused
         ori_shape = np.shape(obs)
         state = np.zeros((*ori_shape[:-1], 37), dtype=np.float32)
