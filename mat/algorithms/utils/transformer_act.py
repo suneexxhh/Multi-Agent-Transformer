@@ -7,8 +7,11 @@ def discrete_autoregreesive_act(decoder, obs_rep, obs, batch_size, n_agent, acti
                                 available_actions=None, deterministic=False):
     shifted_action = torch.zeros((batch_size, n_agent, action_dim + 1)).to(**tpdv)
     shifted_action[:, 0, 0] = 1
-    output_action = torch.zeros((batch_size, n_agent, 1), dtype=torch.long)
-    output_action_log = torch.zeros_like(output_action, dtype=torch.float32)
+    # Sampling outputs must stay on the model device. Original MAT created these
+    # buffers on CPU, which fails when dynamic-order scatter indices are CUDA.
+    output_action = torch.zeros((batch_size, n_agent, 1), dtype=torch.long,
+                                device=shifted_action.device)
+    output_action_log = torch.zeros_like(output_action, dtype=shifted_action.dtype)
 
     for i in range(n_agent):
         logit = decoder(shifted_action, obs_rep, obs)[:, i, :]
@@ -45,8 +48,10 @@ def discrete_parallel_act(decoder, obs_rep, obs, action, batch_size, n_agent, ac
 def continuous_autoregreesive_act(decoder, obs_rep, obs, batch_size, n_agent, action_dim, tpdv,
                                   deterministic=False):
     shifted_action = torch.zeros((batch_size, n_agent, action_dim)).to(**tpdv)
-    output_action = torch.zeros((batch_size, n_agent, action_dim), dtype=torch.float32)
-    output_action_log = torch.zeros_like(output_action, dtype=torch.float32)
+    # Keep continuous sampling outputs on the same device as decoder inputs.
+    output_action = torch.zeros((batch_size, n_agent, action_dim),
+                                dtype=shifted_action.dtype, device=shifted_action.device)
+    output_action_log = torch.zeros_like(output_action)
 
     for i in range(n_agent):
         act_mean = decoder(shifted_action, obs_rep, obs)[:, i, :]
