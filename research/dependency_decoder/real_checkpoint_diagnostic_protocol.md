@@ -460,6 +460,69 @@ causal ground-truth graph labels. The `stage_quality_review.py`
 report explicitly refuses learned-order supervision in this
 single-seed setting.
 
+## Directly sampling the late frozen policy after SNIS overlap failure (verified)
+
+A second read-only CPU experiment,
+[Run #37926410897](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37926410897),
+successfully reused the 100k-step SMAC `3m` run's frozen checkpoints
+and original-agent observation snapshots. Its
+[artifact #11613623845](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37926410897/artifacts/11613623845)
+contains the precise JSON reports and provenance.
+
+**Why change the estimator?** The initial-to-90k importance sampling
+weights suffered low overlap: effective sample sizes were near 1
+out of 32 for three of the four fixed early observations, and
+the one context with adequate overlap had zero measurable pairs.
+No valid SNIS-weighted late-policy dependency estimate existed.
+
+The new optional `paired_checkpoint_diagnostic.py
+--direct-target-histories H` samples actions from the late
+**frozen target decoder itself** at the *same observations, original
+agent order and legal action masks*, then applies the same
+double-precision KL and TV reductions. There is no importance
+weighting or surrogate model in the direct estimate:
+
+```text
+a^h ~ pi_late(.|o,L,sigma)
+C_late(o) = (1/H) * sum_h KL(pi_late(.|o,a^h_<i) ||
+                                 pi_late(.|o,a^h_<i with a_j changed))
+TV_late(o) = corresponding legal-alternative total-variation average
+```
+
+These are **on-policy history draws at frozen states**, not online
+environment rollouts. The separate earlier-draw diagnostic samples
+`a~pi_early` and estimates a different quantity. The new routine
+reports sample-vs-teacher-forced probability agreement, total KL/TV,
+individual-context means and Monte Carlo standard error (across
+action histories only) without adding trainable parameters.
+
+| Fixed SMAC observation bank | Late-policy histories | Late-policy mean KL | Late-policy mean TV | Measured pairs |
+| --- | ---: | ---: | ---: | ---: |
+| Initial snapshot | 64 | 0.003362865187227726 | 0.004623468033969402 | 9 |
+| Initial snapshot | 256 | 0.0032817889004945755 | 0.0045886873267591 | 9 |
+| 90k snapshot | 64 | 0.0005883383564651012 | 0.0005560711724683642 | 7 |
+| 90k snapshot | 256 | 0.0005996432155370712 | 0.0005654250853694975 | 7 |
+
+In both snapshot banks the 64- and 256-history estimates agree
+reasonably well. The initial and later snapshot results **cannot
+be treated as a cross-training-stage improvement trend**, because
+different states, legality and measured pair sets are involved.
+The frozen late decoder is exactly the same checkpoint in both
+banks. Importantly, the late decoder shows conditional action
+sensitivity well above numerical cancellation background; this
+does not identify environment-causal influence or demonstrate
+better cooperative episodic returns.
+
+**Next stronger offline check:** hold an observation bank fixed,
+then run *all six* archived frozen checkpoints with their OWN
+action-history samples at identical legal masks and agent order.
+This controls state input variation while allowing each frozen
+policy to express its own action distribution. The
+[dedicated CPU-only workflow](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/workflows/mat-cpu-100k-fixed-states.yml)
+performs this six-stage, two-bank diagnostic. None of these
+results may train pairwise precedence labels without separate
+held-out direction/coverage evidence and independent trajectories.
+
 ## Math and interpretation
 
 1. Under a fixed observation, legal mask and stored permutation,
