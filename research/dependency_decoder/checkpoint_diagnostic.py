@@ -100,17 +100,23 @@ def run_diagnostic(checkpoint, snapshot, n_block, n_embd, n_head,
         raise RuntimeError("sampled and teacher-forced log-probabilities disagree")
 
     start = time.perf_counter()
-    sensitivity, valid = probe_action_histories(
+    sensitivity, valid, variation = probe_action_histories(
         model.decoder, rep, obs, histories, legal, order,
         max_context_batch=max_context_batch,
-        max_counterfactual_batch=max_counterfactual_batch)
+        max_counterfactual_batch=max_counterfactual_batch,
+        return_tv=True)
     estimate, coverage, ess = expected_dependency(sensitivity, valid)
+    tv_mean, _, _ = expected_dependency(variation, valid)
     sensitivity_s = time.perf_counter() - start
     offdiag = ~torch.eye(n, dtype=torch.bool).unsqueeze(0)
     measured = (coverage > 0) & offdiag
     pairs = int(measured.sum())
     count_by_context = measured.sum(dim=(1, 2))
     mean_by_context = (estimate * measured).sum(dim=(1, 2)) / count_by_context.clamp_min(1)
+    tv_by_context = (tv_mean * measured).sum(dim=(1, 2)) / count_by_context.clamp_min(1)
+    # Pinsker bound holds after averaging histories/alternative actions
+    # by Jensen; small positive excess is diagnostic roundoff only.
+    pinsker_excess = (2 * tv_mean.square() - estimate).clamp_min(0)
     with np.load(str(snapshot), allow_pickle=False) as source:
         context_step = (source["context_step"].tolist()
                         if "context_step" in source else None)
@@ -130,6 +136,8 @@ def run_diagnostic(checkpoint, snapshot, n_block, n_embd, n_head,
         observable_pairs_by_context=[int(x) for x in count_by_context.tolist()],
         mean_kl_by_context=[float(value) if int(count_by_context[i]) else None
                             for i, value in enumerate(mean_by_context)],
+        mean_tv_by_context=[float(value) if int(count_by_context[i]) else None
+                            for i, value in enumerate(tv_by_context)],
         sampled_joint_logp_mean=float(sampled_joint_lp.mean()),
         max_sampling_likelihood_error=maximum_lp_error,
         observable_directed_pairs=pairs,
@@ -137,6 +145,9 @@ def run_diagnostic(checkpoint, snapshot, n_block, n_embd, n_head,
         bidirectionally_observable_pairs=int(bidirectional.sum()),
         mean_observable_kl=(float(estimate[measured].mean()) if pairs else None),
         max_observable_kl=(float(estimate[measured].max()) if pairs else None),
+        mean_observable_tv=(float(tv_mean[measured].mean()) if pairs else None),
+        max_observable_tv=(float(tv_mean[measured].max()) if pairs else None),
+        max_pinsker_excess=(float(pinsker_excess[measured].max()) if pairs else None),
         mean_observed_coverage=(float(coverage[measured].mean()) if pairs else None),
         min_observed_ess=(float(ess[measured].min()) if pairs else None),
         cpu_seconds=dict(sampling=round(sampling_s, 6),
