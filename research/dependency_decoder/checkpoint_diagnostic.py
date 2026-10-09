@@ -71,8 +71,6 @@ def run_diagnostic(checkpoint, snapshot, n_block, n_embd, n_head,
     state_dict = torch.load(str(checkpoint), map_location="cpu", weights_only=True)
     model.load_state_dict(state_dict, strict=True)
     model.eval()
-    if any(p.requires_grad is False for p in model.parameters()):
-        pass  # This is compatible with an externally frozen checkpoint.
     state = torch.zeros((b, n, 37), dtype=torch.float32)
     _, rep = model.encoder(state, obs)
     start = time.perf_counter()
