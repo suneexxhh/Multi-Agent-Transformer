@@ -84,8 +84,13 @@ for positive_int in "$NUM_ENV_STEPS" "$PPO_EPOCH"; do
     exit 2
   fi
 done
-if (( NUM_ENV_STEPS < 100 || NUM_ENV_STEPS % (100 * N_ROLLOUT_THREADS) != 0 )); then
-  echo "NUM_ENV_STEPS must be >= 100 and divisible by 100 * N_ROLLOUT_THREADS" >&2
+# MAT counts whole update batches: floor(requested / (100*envs)).
+# Several legitimate historical budgets are NOT divisible by 32 envs.
+# Report the effective step count instead of silently claiming exact parity.
+ROLLOUT_BATCH_STEPS=$((100 * N_ROLLOUT_THREADS))
+ACTUAL_ENV_STEPS=$((NUM_ENV_STEPS / ROLLOUT_BATCH_STEPS * ROLLOUT_BATCH_STEPS))
+if (( ACTUAL_ENV_STEPS == 0 )); then
+  echo "NUM_ENV_STEPS is too small for one complete rollout batch" >&2
   exit 2
 fi
 if ! [[ "$CLIP_PARAM" =~ ^(0\\.[0-9]+|1\\.0+)$ ]]; then
@@ -194,6 +199,10 @@ run_training() {
     "$LOG_METHOD_NAME" "$MAP" "$GPU_ID" "$SEED" "$NUM_ENV_STEPS" "$PPO_EPOCH" "$CLIP_PARAM"
   printf 'training_protocol_class=%s historical_reference_candidate_is_unverified=1\n' "$PROTOCOL_CLASS"
   printf 'reference_map_steps=%s reference_ppo_epoch=%s reference_clip=%s\n' "$default_steps" "$default_epochs" "$default_clip"
+  printf 'requested_env_steps=%s effective_env_steps=%s rollout_batch_steps=%s\n' "$NUM_ENV_STEPS" "$ACTUAL_ENV_STEPS" "$ROLLOUT_BATCH_STEPS"
+  if (( ACTUAL_ENV_STEPS != NUM_ENV_STEPS )); then
+    printf 'WARNING: requested env steps rounded down by complete MAT rollout batches\n'
+  fi
   printf 'agent_order_mode=%s agent_order_seed=%s\n' "$AGENT_ORDER_MODE" "$AGENT_ORDER_SEED"
   printf 'store_agent_orders=%s\n' "$STORE_AGENT_ORDERS"
   printf 'decoder_diag_capture=%s\n' "$DECODER_DIAG_CAPTURE"
