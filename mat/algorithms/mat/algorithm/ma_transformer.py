@@ -14,6 +14,7 @@ from mat.algorithms.utils.transformer_act import (
     continuous_autoregreesive_ordered_act, continuous_parallel_ordered_act,
 )
 from mat.algorithms.mat.algorithm.agent_ordering import compute_agent_order, validate_agent_order
+from mat.algorithms.mat.algorithm.learned_agent_order import LearnedAgentOrder
 
 def init_(m, gain=0.01, activate=False):
     if activate:
@@ -231,7 +232,8 @@ class MultiAgentTransformer(nn.Module):
     def __init__(self, state_dim, obs_dim, action_dim, n_agent,
                  n_block, n_embd, n_head, encode_state=False, device=torch.device("cpu"),
                  action_type='Discrete', dec_actor=False, share_actor=False,
-                 agent_order_mode='identity', agent_order_seed=1):
+                 agent_order_mode='identity', agent_order_seed=1,
+                 order_hidden_dim=64, order_temperature=1.0):
         super(MultiAgentTransformer, self).__init__()
 
         self.n_agent = n_agent
@@ -241,6 +243,8 @@ class MultiAgentTransformer(nn.Module):
         self.device = device
         self.agent_order_mode = agent_order_mode
         self.agent_order_seed = agent_order_seed
+        self.order_policy = (LearnedAgentOrder(obs_dim, order_hidden_dim, order_temperature)
+                             if agent_order_mode == 'learned' else None)
         if dec_actor and agent_order_mode != 'identity':
             raise ValueError("V0 agent ordering only supports Transformer Decoder (mat), not dec_actor.")
 
@@ -256,7 +260,8 @@ class MultiAgentTransformer(nn.Module):
         if self.action_type != 'Discrete':
             self.decoder.zero_std(self.device)
 
-    def forward(self, state, obs, action, available_actions=None, agent_order=None):
+    def forward(self, state, obs, action, available_actions=None, agent_order=None,
+                return_order_log_prob=False):
         # state: (batch, n_agent, state_dim)
         # obs: (batch, n_agent, obs_dim)
         # action: (batch, n_agent, 1)
@@ -278,8 +283,14 @@ class MultiAgentTransformer(nn.Module):
         if agent_order is not None:
             agent_order = validate_agent_order(
                 agent_order, batch_size, self.n_agent, obs.device)
+        elif self.order_policy is not None:
+            raise ValueError("learned PPO evaluation requires saved rollout agent_order")
         elif self.agent_order_mode != 'identity':
             agent_order = compute_agent_order(obs, self.agent_order_mode, self.agent_order_seed)
+        if return_order_log_prob and self.order_policy is None:
+            raise ValueError("order log probability available only for learned ordering")
+        order_log_prob = (self.order_policy.log_prob(obs, agent_order)
+                          if return_order_log_prob else None)
         if self.action_type == 'Discrete':
             action = action.long()
             if agent_order is None:
@@ -301,10 +312,12 @@ class MultiAgentTransformer(nn.Module):
                     self.decoder, obs_rep, obs, action, batch_size,
                     self.n_agent, self.action_dim, self.tpdv, agent_order)
 
+        if return_order_log_prob:
+            return action_log, v_loc, entropy, order_log_prob
         return action_log, v_loc, entropy
 
     def get_actions(self, state, obs, available_actions=None, deterministic=False,
-                    agent_order=None, return_agent_order=False):
+                    agent_order=None, return_agent_order=False, return_order_log_prob=False):
         # state unused
         ori_shape = np.shape(obs)
         state = np.zeros((*ori_shape[:-1], 37), dtype=np.float32)
@@ -316,9 +329,13 @@ class MultiAgentTransformer(nn.Module):
 
         batch_size = np.shape(obs)[0]
         v_loc, obs_rep = self.encoder(state, obs)
+        if return_order_log_prob and (self.order_policy is None or not return_agent_order):
+            raise ValueError("order log probability requires learned mode and stored orders")
         if agent_order is not None:
             agent_order = validate_agent_order(
                 agent_order, batch_size, self.n_agent, obs.device)
+        elif self.order_policy is not None:
+            agent_order, _ = self.order_policy.sample(obs, deterministic=deterministic)
         elif self.agent_order_mode != 'identity':
             agent_order = compute_agent_order(obs, self.agent_order_mode, self.agent_order_seed)
         if self.action_type == "Discrete":
@@ -346,6 +363,9 @@ class MultiAgentTransformer(nn.Module):
             # recomputation of the scorer after PPO has updated weights.
             stored_order = (agent_order if agent_order is not None else
                             compute_agent_order(obs, mode="identity"))
+            if return_order_log_prob:
+                order_lp = self.order_policy.log_prob(obs, stored_order)
+                return output_action, output_action_log, v_loc, stored_order.detach(), order_lp.detach()
             return output_action, output_action_log, v_loc, stored_order.detach()
         return output_action, output_action_log, v_loc
 
