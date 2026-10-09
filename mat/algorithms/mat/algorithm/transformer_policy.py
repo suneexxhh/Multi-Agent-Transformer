@@ -57,11 +57,19 @@ class TransformerPolicy:
         else:
             raise NotImplementedError
 
+        # Only the original MAT architecture supports this V0 decoder experiment.
+        order_mode = getattr(args, "agent_order_mode", "identity")
+        order_seed = getattr(args, "agent_order_seed", 1)
+        if order_mode != "identity" and self.algorithm_name != "mat":
+            raise ValueError("agent_order_mode requires --algorithm_name mat")
+        extra_kwargs = {}
+        if self.algorithm_name in ["mat", "mat_dec"]:
+            extra_kwargs = dict(agent_order_mode=order_mode, agent_order_seed=order_seed)
         self.transformer = MAT(self.share_obs_dim, self.obs_dim, self.act_dim, num_agents,
                                n_block=args.n_block, n_embd=args.n_embd, n_head=args.n_head,
                                encode_state=args.encode_state, device=device,
                                action_type=self.action_type, dec_actor=args.dec_actor,
-                               share_actor=args.share_actor)
+                               share_actor=args.share_actor, **extra_kwargs)
         if args.env_name == "hands":
             self.transformer.zero_std()
 
