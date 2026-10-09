@@ -586,10 +586,34 @@ required. Inference and PPO stay identical.
 
 The separate CPU-only
 [entropy-augmented archived sweep](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37927267006)
-was initiated to inspect entropy and KL/TV on the same
-six-checkpoint two-bank inputs. Its actual numeric outcomes
-must be checked before interpreting any entropy-dependence
-relation; merely launching the workflow is not evidence.
+**completed successfully**. Its
+[artifact #11613869975](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37927267006/artifacts/11613869975)
+contains twelve aligned, 128-history checkpoint diagnostics and a
+fixed-state comparison table. All joint-policy entropy values were
+computed from the *same* sampled action log-probabilities as KL/TV;
+there are no extra Decoder passes.
+
+| Frozen-model training steps | Joint entropy at fixed initial states (nats) | Joint entropy at fixed 90k states (nats) |
+| ---: | ---: | ---: |
+| 0 | 4.141697883605957 | 4.0445170402526855 |
+| 100 | 4.128137588500977 | 4.042891502380371 |
+| 1,000 | 4.107318878173828 | 3.9901673793792725 |
+| 10,000 | 1.1811500787734985 | 1.1531189680099487 |
+| 50,000 | 0.43877679109573364 | 0.7203799486160278 |
+| 90,000 | 0.3730016350746155 | 0.06606321036815643 |
+
+The low-TV 90k model has **much lower conditional joint-action
+entropy** than the initial model at these fixed observations.
+This is consistent with a late policy that selects a narrow set
+of legal actions. It offers a plausible explanation for some
+of the nonmonotonic KL/TV behavior, but neither proves causal
+forgetting of useful dependencies nor establishes that this
+near-determinism wins games. A separate **native,
+non-training SMAC evaluation** of selected frozen checkpoints
+is required before judging decision quality. The
+[bounded evaluation workflow](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37928088237)
+has been requested; its success and quantitative results must
+be verified independently.
 
 ## Math and interpretation
 
