@@ -68,8 +68,11 @@ class TestActionInfluenceProbe(unittest.TestCase):
         self.assertFalse(bool(scores.any()))
         legal[:, 0] = 1
         legal[:, 2] = torch.tensor([1., 0., 0.])
-        scores = legal_action_kl_probe(decoder, rep, obs, actions, legal)
+        scores, valid = legal_action_kl_probe(
+            decoder, rep, obs, actions, legal, return_valid=True)
         self.assertFalse(bool(scores.any()))  # last agent's legal action is fixed
+        self.assertFalse(valid[0, 0, 2].item())  # unknown, NOT measured-zero
+        self.assertFalse(valid[0, 1, 2].item())
         decoder.train()
         with self.assertRaises(ValueError):
             legal_action_kl_probe(decoder, rep, obs, actions, legal)
