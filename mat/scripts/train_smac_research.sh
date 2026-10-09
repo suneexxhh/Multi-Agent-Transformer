@@ -15,6 +15,24 @@ DRY_RUN="${DRY_RUN:-0}"
 EXP_TAG="${EXP_TAG:-decoder_v0_baseline}"
 AGENT_ORDER_MODE="${AGENT_ORDER_MODE:-identity}"
 AGENT_ORDER_SEED="${AGENT_ORDER_SEED:-1}"
+# For SC2 startup/resource diagnosis use e.g. N_ROLLOUT_THREADS=2
+# and USE_EVAL=0. Full baseline stays at 32 threads + evaluation by default.
+N_ROLLOUT_THREADS="${N_ROLLOUT_THREADS:-32}"
+N_TRAINING_THREADS="${N_TRAINING_THREADS:-16}"
+N_EVAL_ROLLOUT_THREADS="${N_EVAL_ROLLOUT_THREADS:-1}"
+EVAL_EPISODES="${EVAL_EPISODES:-32}"
+USE_EVAL="${USE_EVAL:-1}"
+for positive_int in "$N_ROLLOUT_THREADS" "$N_TRAINING_THREADS" \
+                    "$N_EVAL_ROLLOUT_THREADS" "$EVAL_EPISODES"; do
+  if ! [[ "$positive_int" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Thread counts and eval episodes must be positive integers" >&2
+    exit 2
+  fi
+done
+if [[ "$USE_EVAL" != "0" && "$USE_EVAL" != "1" ]]; then
+  echo "USE_EVAL must be 0 or 1" >&2
+  exit 2
+fi
 case "$AGENT_ORDER_MODE" in
   identity|random_fixed|obs_norm) ;;
   *) echo "Unknown AGENT_ORDER_MODE: $AGENT_ORDER_MODE" >&2; exit 2 ;;
@@ -58,8 +76,10 @@ args=(
   --experiment_name "$EXP_NAME"
   --map_name "$MAP"
   --seed "$SEED"
-  --n_training_threads 16
-  --n_rollout_threads 32
+  --n_training_threads "$N_TRAINING_THREADS"
+  --n_rollout_threads "$N_ROLLOUT_THREADS"
+  --n_eval_rollout_threads "$N_EVAL_ROLLOUT_THREADS"
+  --eval_episodes "$EVAL_EPISODES"
   --num_mini_batch 1
   --episode_length 100
   --num_env_steps "$NUM_ENV_STEPS"
@@ -68,13 +88,17 @@ args=(
   --clip_param "$CLIP_PARAM"
   --save_interval 100000
   --use_value_active_masks
-  --use_eval
 )
+if [[ "$USE_EVAL" == "1" ]]; then
+  args+=(--use_eval)
+fi
 
 echo "MAT Decoder Auto Research / original Encoder-Critic baseline"
 printf 'map=%s gpu=%s seed=%s steps=%s ppo_epoch=%s clip=%s\n' \
   "$MAP" "$GPU_ID" "$SEED" "$NUM_ENV_STEPS" "$PPO_EPOCH" "$CLIP_PARAM"
 printf 'agent_order_mode=%s agent_order_seed=%s\n' "$AGENT_ORDER_MODE" "$AGENT_ORDER_SEED"
+printf 'rollout_threads=%s training_threads=%s eval_threads=%s eval_episodes=%s use_eval=%s\n' \
+  "$N_ROLLOUT_THREADS" "$N_TRAINING_THREADS" "$N_EVAL_ROLLOUT_THREADS" "$EVAL_EPISODES" "$USE_EVAL"
 printf 'repository_root=%s\nlog_file=%s\n' "$REPO_ROOT" "$LOG_FILE"
 printf 'command: CUDA_VISIBLE_DEVICES=%q %q -u train/train_smac.py ' "$GPU_ID" "$PYTHON_BIN"
 printf '%q ' "${args[@]}"
