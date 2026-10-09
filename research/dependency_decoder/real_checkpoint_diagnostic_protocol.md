@@ -231,6 +231,32 @@ remained consistent. From here, prioritise numerical robustness,
 more realistic checkpoints and multiple trajectories before
 even considering learning the low-rank precedence scorer in PPO.
 
+## Numerical follow-up: KL below single-precision subtraction scale
+
+The Run #37919072289 values above were obtained from its
+**pinned earlier source revision** and used `float32`
+`log_softmax` subtraction. The research branch has subsequently
+updated only the offline `action_influence_probe.py` KL reduction
+to **float64** for reference and counterfactual log-probabilities
+and probability-weighted summation; decoder forward calls remain
+in the original model dtype, with no new parameters. Invalid
+actions are explicitly excluded, avoiding `0*(-inf-(-inf))`.
+
+The standalone analytic test checks binary
+`KL((1/2,1/2) || softmax(0, epsilon))`
+at `epsilon=1e-4`, whose exact value is
+`log(cosh(epsilon/2)) ~= 1.25e-9`. This distinguishes genuine
+small positive KL from roundoff-triggered zero/negative values.
+
+**The earlier GPU artifact numbers have not been recomputed under
+the new double-precision reduction.** The artifact remains a
+correct log-probability/coverage/functionality validation, but do
+not cite the near-zero KL as a calibrated edge strength until
+rerunning that archived checkpoint data offline with the corrected
+probe and adequate action-history samples. In particular, do not
+promote the untrained, short-checkpoint KL to a supervised ranking
+label.
+
 ## Math and interpretation
 
 1. Under a fixed observation, legal mask and stored permutation,
