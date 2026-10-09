@@ -111,17 +111,20 @@ def teacher_forced_history_log_probs(decoder, obs_rep, obs, available_actions,
 
 
 @torch.no_grad()
-def self_normalized_policy_weights(target_joint_logp, behavior_joint_logp):
+def self_normalized_policy_weights(target_joint_logp, behavior_joint_logp,
+                                   min_ess=None):
     """SNIS weights for frozen target versus frozen behavior policies.
 
     Return (weights[H,B], ESS[B]). Both log probabilities must describe
     the SAME saved actions, observations, legal masks and agent orders.
     Requires common action support; the caller must verify it (e.g.
     both decoders use the identical discrete legal-action masks).
-    Weighting corrects a changed policy distribution in expectation
-    only as H increases; finite-H self-normalization is biased.
+    Finite-H self-normalization is biased; reliability deteriorates
+    sharply with small ESS. Optional min_ess rejects unusable estimates
+    before they reach precedence-label or graph fitting code.
     """
     if (not isinstance(target_joint_logp, torch.Tensor) or
+            not isinstance(behavior_joint_logp, torch.Tensor) or
             target_joint_logp.ndim != 2 or
             target_joint_logp.shape != behavior_joint_logp.shape or
             target_joint_logp.shape[0] == 0 or
@@ -131,4 +134,11 @@ def self_normalized_policy_weights(target_joint_logp, behavior_joint_logp):
     log_ratio = target_joint_logp - behavior_joint_logp
     weights = torch.softmax(log_ratio, dim=0)
     ess = weights.sum(0).square() / weights.square().sum(0)
+    if min_ess is not None:
+        threshold = torch.as_tensor(min_ess, dtype=ess.dtype, device=ess.device)
+        if (threshold.numel() != 1 or not torch.isfinite(threshold).all() or
+                threshold.item() < 1):
+            raise ValueError("min_ess must be finite and >= 1")
+        if torch.any(ess < threshold):
+            raise ValueError("policy-shift ESS below min_ess; obtain better-support samples")
     return weights, ess
