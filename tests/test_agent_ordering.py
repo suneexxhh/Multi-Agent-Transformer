@@ -159,5 +159,56 @@ class TestOrderedActionDecoding(unittest.TestCase):
         self.assertTrue(any(g.abs().sum().item() > 0 for g in grads))
 
 
+
+
+class ContinuousCausalToyDecoder(torch.nn.Module):
+    def __init__(self, action_dim):
+        super().__init__()
+        self.log_std = torch.nn.Parameter(torch.zeros(action_dim))
+
+    def forward(self, shifted_action, obs_rep, obs):
+        action_dim = shifted_action.shape[-1]
+        return obs_rep[..., :action_dim] + 0.25 * torch.cumsum(shifted_action, dim=1)
+
+
+class TestContinuousAndCausalMask(unittest.TestCase):
+    def test_continuous_sampling_eval_logprob_consistency(self):
+        torch.manual_seed(104)
+        batch_size, n_agent, action_dim = 2, 3, 2
+        order = torch.tensor([[2, 0, 1], [1, 2, 0]], dtype=torch.long)
+        obs_rep = torch.randn(batch_size, n_agent, 4)
+        obs = torch.randn(batch_size, n_agent, 7)
+        decoder = ContinuousCausalToyDecoder(action_dim)
+        tpdv = dict(dtype=torch.float32, device=torch.device("cpu"))
+        actions, lp_sample = continuous_autoregreesive_ordered_act(
+            decoder, obs_rep, obs, batch_size, n_agent,
+            action_dim, tpdv, order, deterministic=False)
+        lp_eval, entropy = continuous_parallel_ordered_act(
+            decoder, obs_rep, obs, actions, batch_size,
+            n_agent, action_dim, tpdv, order)
+        self.assertEqual(actions.shape, (batch_size, n_agent, action_dim))
+        self.assertEqual(entropy.shape, (batch_size, n_agent, action_dim))
+        self.assertTrue(torch.allclose(lp_sample, lp_eval, atol=1e-6))
+
+    def test_decoder_future_shifted_actions_cannot_change_past_logits(self):
+        torch.manual_seed(24)
+        model = MultiAgentTransformer(
+            state_dim=9, obs_dim=7, action_dim=4, n_agent=3,
+            n_block=2, n_embd=16, n_head=1, action_type="Discrete",
+            agent_order_mode="obs_norm")
+        model.eval()
+        rep = torch.randn(2, 3, 16)
+        obs = torch.randn(2, 3, 7)
+        x0 = torch.zeros(2, 3, 5)
+        x0[:, 0, 0] = 1
+        x1 = x0.clone()
+        # This token is only at the final position; it must not leak into
+        # the first two logits, because all Decoder attention is causal.
+        x1[:, 2, 1:] = torch.tensor([1., 0., 0., 0.])
+        with torch.no_grad():
+            logits0 = model.decoder(x0, rep, obs)
+            logits1 = model.decoder(x1, rep, obs)
+        self.assertTrue(torch.allclose(logits0[:, :2], logits1[:, :2], atol=1e-7))
+
 if __name__ == "__main__":
     unittest.main()
