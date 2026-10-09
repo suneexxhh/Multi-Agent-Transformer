@@ -48,6 +48,10 @@ if [[ "$DECODER_DIAG_CAPTURE" == "1" && "$STORE_AGENT_ORDERS" != "1" ]]; then
   echo "DECODER_DIAG_CAPTURE=1 requires STORE_AGENT_ORDERS=1" >&2
   exit 2
 fi
+if [[ "$DECODER_DIAG_CAPTURE" == "1" && ! "$DECODER_DIAG_CAPTURE_EPISODES" =~ ^[0-9]+(,[0-9]+){0,7}$ ]]; then
+  echo "DECODER_DIAG_CAPTURE_EPISODES must be 1-8 comma-separated integers" >&2
+  exit 2
+fi
 case "$AGENT_ORDER_MODE" in
   identity|random_fixed|obs_norm) ;;
   *) echo "Unknown AGENT_ORDER_MODE: $AGENT_ORDER_MODE" >&2; exit 2 ;;
