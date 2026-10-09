@@ -210,5 +210,62 @@ class TestContinuousAndCausalMask(unittest.TestCase):
             logits1 = model.decoder(x1, rep, obs)
         self.assertTrue(torch.allclose(logits0[:, :2], logits1[:, :2], atol=1e-7))
 
+
+
+class TestSamplingDevices(unittest.TestCase):
+    """Regression for CPU outputs mixed with CUDA permutation indices.
+
+    GitHub hosted CI tests CPU and skips CUDA; the same unittest suite, run on
+    the SMAC GPU server, executes the CUDA checks automatically.
+    """
+
+    def _exercise_mat_model(self, device):
+        torch.manual_seed(51)
+        for mode in ("identity", "random_fixed", "obs_norm"):
+            with self.subTest(device=device, mode=mode):
+                mat = MultiAgentTransformer(
+                    state_dim=9, obs_dim=7, action_dim=4, n_agent=3,
+                    n_block=1, n_embd=16, n_head=1,
+                    device=torch.device(device), action_type="Discrete",
+                    agent_order_mode=mode, agent_order_seed=5)
+                mat.eval()
+                obs = np.random.RandomState(51).randn(2, 3, 7).astype(np.float32)
+                state = np.zeros((2, 3, 9), dtype=np.float32)
+                legal = np.ones((2, 3, 4), dtype=np.float32)
+                with torch.no_grad():
+                    actions, sampled_lp, values = mat.get_actions(
+                        state, obs, legal, deterministic=True)
+                    evaluated_lp, other_values, _ = mat(
+                        state, obs, actions, legal)
+                target_device = torch.device(device)
+                for tensor in (actions, sampled_lp, values, evaluated_lp, other_values):
+                    self.assertEqual(tensor.device, target_device)
+                self.assertTrue(torch.allclose(sampled_lp, evaluated_lp, atol=2e-5))
+
+    def test_cpu_sampling_devices(self):
+        self._exercise_mat_model("cpu")
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA GPU is not available")
+    def test_cuda_sampling_devices(self):
+        self._exercise_mat_model("cuda:0")
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA GPU is not available")
+    def test_cuda_continuous_action_devices(self):
+        torch.manual_seed(101)
+        device = torch.device("cuda:0")
+        obs_rep = torch.randn(2, 3, 4, device=device)
+        obs = torch.randn(2, 3, 7, device=device)
+        order = torch.tensor([[1, 0, 2], [2, 1, 0]], device=device)
+        decoder = ContinuousCausalToyDecoder(2).to(device)
+        tpdv = dict(dtype=torch.float32, device=device)
+        with torch.no_grad():
+            actions, sampled_lp = continuous_autoregreesive_ordered_act(
+                decoder, obs_rep, obs, 2, 3, 2, tpdv, order)
+            evaluated_lp, _ = continuous_parallel_ordered_act(
+                decoder, obs_rep, obs, actions, 2, 3, 2, tpdv, order)
+        self.assertEqual(actions.device, device)
+        self.assertEqual(sampled_lp.device, device)
+        self.assertTrue(torch.allclose(sampled_lp, evaluated_lp, atol=1e-6))
+
 if __name__ == "__main__":
     unittest.main()
