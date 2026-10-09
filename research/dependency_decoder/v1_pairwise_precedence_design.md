@@ -82,12 +82,12 @@ joint policy is `rho_phi(sigma|o) * pi_theta(a|o,sigma)`: a future PPO
 ordering update must account for the order probability too. Simply
 reusing old orders does NOT train `phi` correctly.
 
-### Mathematical route to meaningful supervised dependencies (future)
+### Mathematical route to meaningful supervised dependencies (offline diagnostic implemented)
 
-A plausible **policy-dependence proxy** is to hold observations and
-other preceding actions fixed, perturb a preceding action `a_j`
-within its legal set, and measure the effect on a later conditional
-action distribution:
+An implemented, **diagnostic-only policy-dependence proxy** holds
+observations and all other preceding actions fixed, then replaces one
+earlier action `a_j` with a different legal action. The KL of a later
+conditional action distribution measures this specific perturbation:
 
 ```text
 C_(j->i) =
@@ -99,7 +99,21 @@ C_(j->i) =
 ```
 
 This measures **within-policy conditional sensitivity**, not a causal
-effect on environment dynamics or optimal joint return. It only
+effect on environment dynamics or optimal joint return. The implementation
+`research/dependency_decoder/action_influence_probe.py` uses one baseline
+decoder pass and one **batched** perturbation decoder pass, returning a
+`[B,N,N]` directed KL matrix in the original agent-ID axes. It checks
+action availability, requires eval mode, and skips agents without legal
+alternatives. The diagnostic has two Python decoder calls but evaluates
+up to `N-1` parallel perturbation contexts, so it is **not** constant
+compute or a free parallel-policy speedup. The alternative legal action
+is deterministic (first available) and the resulting KL is not an
+unbiased intervention average or label by itself.
+
+Synthetic tests `tests/test_action_influence_probe.py` isolate a known
+toy decoder edge and require only that link to be positive while all
+others remain zero. This is a unit test of our calculation, not an
+experimental finding on StarCraft II. It only
 observes directed pairs present as preceding/succeeding in the
 chosen order, so it cannot identify both directions without
 additional ordering contexts. It may reflect attention/model
@@ -150,9 +164,11 @@ claiming a speedup.
 1. Keep the low-rank scorer isolated; compare it with the previous
    pair-MLP scoring implementation on synthetic known relationships
    (parameter count, ranking accuracy, inference overhead).
-2. Implement a *diagnostic-only* legal-action intervention signal;
-   quantify whether it agrees with synthetic true dependencies and
-   which directed pairs cannot be observed under a single order.
+2. The diagnostic-only legal-action KL probe and synthetic edge test
+   are implemented; next quantify sensitivity agreement on multiple
+   controlled toy games, compare several *legal* alternatives and
+   determine which directed pairs are unobserved under one order.
+   Do not use its KL values as labels before that validation.
 3. Define a training/evaluation protocol before integrating the
    learned graph. Add scorer freeze boundaries and an explicit stored
    permutation regression across scorer-weight changes.
