@@ -83,3 +83,53 @@ def continuous_parallel_act(decoder, obs_rep, obs, action, batch_size, n_agent, 
     action_log = distri.log_prob(action)
     entropy = distri.entropy()
     return action_log, entropy
+
+
+# V0 wrappers preserve the reference autoregressive and teacher-forced
+# implementations exactly; only the agent axis is permuted.
+from mat.algorithms.mat.algorithm.agent_ordering import reorder_agents, restore_agents
+
+
+def discrete_autoregreesive_ordered_act(decoder, obs_rep, obs, batch_size, n_agent,
+                                       action_dim, tpdv, agent_order, available_actions=None,
+                                       deterministic=False):
+    ordered_rep = reorder_agents(obs_rep, agent_order)
+    ordered_obs = reorder_agents(obs, agent_order)
+    ordered_available = reorder_agents(available_actions, agent_order)
+    action, log_prob = discrete_autoregreesive_act(
+        decoder, ordered_rep, ordered_obs, batch_size, n_agent, action_dim,
+        tpdv, ordered_available, deterministic
+    )
+    return restore_agents(action, agent_order), restore_agents(log_prob, agent_order)
+
+
+def discrete_parallel_ordered_act(decoder, obs_rep, obs, action, batch_size,
+                                  n_agent, action_dim, tpdv, agent_order,
+                                  available_actions=None):
+    log_prob, entropy = discrete_parallel_act(
+        decoder, reorder_agents(obs_rep, agent_order),
+        reorder_agents(obs, agent_order), reorder_agents(action, agent_order),
+        batch_size, n_agent, action_dim, tpdv,
+        reorder_agents(available_actions, agent_order)
+    )
+    return restore_agents(log_prob, agent_order), restore_agents(entropy, agent_order)
+
+
+def continuous_autoregreesive_ordered_act(decoder, obs_rep, obs, batch_size, n_agent,
+                                         action_dim, tpdv, agent_order, deterministic=False):
+    action, log_prob = continuous_autoregreesive_act(
+        decoder, reorder_agents(obs_rep, agent_order),
+        reorder_agents(obs, agent_order), batch_size, n_agent, action_dim,
+        tpdv, deterministic
+    )
+    return restore_agents(action, agent_order), restore_agents(log_prob, agent_order)
+
+
+def continuous_parallel_ordered_act(decoder, obs_rep, obs, action, batch_size,
+                                    n_agent, action_dim, tpdv, agent_order):
+    log_prob, entropy = continuous_parallel_act(
+        decoder, reorder_agents(obs_rep, agent_order),
+        reorder_agents(obs, agent_order), reorder_agents(action, agent_order),
+        batch_size, n_agent, action_dim, tpdv
+    )
+    return restore_agents(log_prob, agent_order), restore_agents(entropy, agent_order)
