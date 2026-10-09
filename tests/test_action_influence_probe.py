@@ -5,6 +5,7 @@ import torch
 from torch import nn
 
 from research.dependency_decoder.action_influence_probe import legal_action_kl_probe
+from mat.algorithms.mat.algorithm.ma_transformer import MultiAgentTransformer
 
 
 class OnlyFirstToThirdToyDecoder(nn.Module):
@@ -76,6 +77,30 @@ class TestActionInfluenceProbe(unittest.TestCase):
             legal_action_kl_probe(
                 decoder, rep, obs, actions, legal,
                 agent_order=torch.tensor([[0, 0, 1]]))
+
+    def test_real_mat_masked_decoder_interface(self):
+        # Ensure the probe works on the actual MAT Decoder, not only a toy.
+        torch.manual_seed(710)
+        model = MultiAgentTransformer(
+            state_dim=9, obs_dim=7, action_dim=4, n_agent=3,
+            n_block=1, n_embd=16, n_head=1,
+            action_type="Discrete").eval()
+        rep = torch.randn(2, 3, 16)
+        obs = torch.randn(2, 3, 7)
+        actions = torch.tensor([[[0], [1], [2]], [[2], [1], [0]]])
+        legal = torch.ones(2, 3, 4)
+        order = torch.tensor([[2, 0, 1], [1, 2, 0]], dtype=torch.long)
+        scores = legal_action_kl_probe(
+            model.decoder, rep, obs, actions, legal, agent_order=order)
+        self.assertEqual(scores.shape, (2, 3, 3))
+        self.assertTrue(torch.isfinite(scores).all())
+        self.assertTrue((scores >= 0).all())
+        ranks = torch.empty_like(order)
+        ranks.scatter_(1, order, torch.arange(3).expand_as(order))
+        impossible = ranks.unsqueeze(2) >= ranks.unsqueeze(1)
+        self.assertTrue(torch.equal(
+            scores.masked_select(impossible),
+            torch.zeros_like(scores).masked_select(impossible)))
 
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA not available")
     def test_cuda_probe(self):
