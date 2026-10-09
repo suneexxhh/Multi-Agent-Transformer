@@ -13,6 +13,12 @@ SEED="${3:-1}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 DRY_RUN="${DRY_RUN:-0}"
 EXP_TAG="${EXP_TAG:-decoder_v0_baseline}"
+AGENT_ORDER_MODE="${AGENT_ORDER_MODE:-identity}"
+AGENT_ORDER_SEED="${AGENT_ORDER_SEED:-1}"
+case "$AGENT_ORDER_MODE" in
+  identity|random_fixed|obs_norm) ;;
+  *) echo "Unknown AGENT_ORDER_MODE: $AGENT_ORDER_MODE" >&2; exit 2 ;;
+esac
 
 # Historical MAT-MSA scripts used different map-specific training budgets.
 # These are references for matched baselines, not proven-optimal hyperparameters.
@@ -47,6 +53,8 @@ LOG_FILE="$LOG_DIR/${MAP}_${EXP_NAME}_gpu${GPU_ID}_${STAMP}.log"
 args=(
   --env_name StarCraft2
   --algorithm_name mat
+  --agent_order_mode "$AGENT_ORDER_MODE"
+  --agent_order_seed "$AGENT_ORDER_SEED"
   --experiment_name "$EXP_NAME"
   --map_name "$MAP"
   --seed "$SEED"
