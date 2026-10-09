@@ -128,30 +128,30 @@ run_training() {
       echo "ERROR: Python not found in Conda environment: $PYTHON_BIN" >&2
       return 2
     fi
-    printf 'active_conda_env=%s python=%s\\n' "$CONDA_DEFAULT_ENV" "$PYTHON_BIN"
+    printf 'active_conda_env=%s python=%s\n' "$CONDA_DEFAULT_ENV" "$PYTHON_BIN"
   fi
 
   echo "MAT Decoder Auto Research / original Encoder-Critic baseline"
-  printf 'method=%s map=%s gpu=%s seed=%s steps=%s ppo_epoch=%s clip=%s\\n' \\
+  printf 'method=%s map=%s gpu=%s seed=%s steps=%s ppo_epoch=%s clip=%s\n' \
     "$LOG_METHOD_NAME" "$MAP" "$GPU_ID" "$SEED" "$NUM_ENV_STEPS" "$PPO_EPOCH" "$CLIP_PARAM"
-  printf 'agent_order_mode=%s agent_order_seed=%s\\n' "$AGENT_ORDER_MODE" "$AGENT_ORDER_SEED"
-  printf 'rollout_threads=%s training_threads=%s eval_threads=%s eval_episodes=%s use_eval=%s\\n' \\
+  printf 'agent_order_mode=%s agent_order_seed=%s\n' "$AGENT_ORDER_MODE" "$AGENT_ORDER_SEED"
+  printf 'rollout_threads=%s training_threads=%s eval_threads=%s eval_episodes=%s use_eval=%s\n' \
     "$N_ROLLOUT_THREADS" "$N_TRAINING_THREADS" "$N_EVAL_ROLLOUT_THREADS" "$EVAL_EPISODES" "$USE_EVAL"
-  printf 'repository_root=%s\\nlog_file=%s\\n' "$REPO_ROOT" "$LOG_FILE"
+  printf 'repository_root=%s\nlog_file=%s\n' "$REPO_ROOT" "$LOG_FILE"
   printf 'command: CUDA_VISIBLE_DEVICES=%q %q -u train/train_smac.py ' "$GPU_ID" "$PYTHON_BIN"
   printf '%q ' "${args[@]}"
-  printf '\\n'
+  printf '\n'
 
   if [[ "$DRY_RUN" == "1" ]]; then
     echo "DRY_RUN=1: command printed; no training started."
     return 0
   fi
 
-  printf 'training_started_at=%s\\n' "$(date -Iseconds)"
+  printf 'training_started_at=%s\n' "$(date -Iseconds)"
   echo "Launching SMAC training; see $LOG_FILE"
   local status=0
   CUDA_VISIBLE_DEVICES="$GPU_ID" "$PYTHON_BIN" -u train/train_smac.py "${args[@]}" || status=$?
-  printf 'training_finished_at=%s exit_code=%s\\n' "$(date -Iseconds)" "$status"
+  printf 'training_finished_at=%s exit_code=%s\n' "$(date -Iseconds)" "$status"
   return "$status"
 }
 
