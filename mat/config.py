@@ -298,6 +298,10 @@ def get_config():
     parser.add_argument("--agent_order_seed", type=int, default=1,
                         help="Seed of static random agent order (separate from environment seed)")
 
+    parser.add_argument("--store_agent_orders", action="store_true", default=False,
+                        help="V1 infrastructure: store per-rollout MAT agent permutations for PPO; "
+                             "SMAC only, preserves V0 behavior when disabled")
+
     # add for online multi-task
     parser.add_argument("--train_maps", type=str, nargs='+', default=None)
     parser.add_argument("--eval_maps", type=str, nargs='+', default=None)
