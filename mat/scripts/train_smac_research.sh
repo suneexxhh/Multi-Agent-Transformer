@@ -23,6 +23,7 @@ N_EVAL_ROLLOUT_THREADS="${N_EVAL_ROLLOUT_THREADS:-1}"
 EVAL_EPISODES="${EVAL_EPISODES:-32}"
 USE_EVAL="${USE_EVAL:-1}"
 STORE_AGENT_ORDERS="${STORE_AGENT_ORDERS:-0}"
+DECODER_DIAG_CAPTURE="${DECODER_DIAG_CAPTURE:-0}"
 for positive_int in "$N_ROLLOUT_THREADS" "$N_TRAINING_THREADS" \
                     "$N_EVAL_ROLLOUT_THREADS" "$EVAL_EPISODES"; do
   if ! [[ "$positive_int" =~ ^[1-9][0-9]*$ ]]; then
@@ -36,6 +37,14 @@ if [[ "$USE_EVAL" != "0" && "$USE_EVAL" != "1" ]]; then
 fi
 if [[ "$STORE_AGENT_ORDERS" != "0" && "$STORE_AGENT_ORDERS" != "1" ]]; then
   echo "STORE_AGENT_ORDERS must be 0 or 1" >&2
+  exit 2
+fi
+if [[ "$DECODER_DIAG_CAPTURE" != "0" && "$DECODER_DIAG_CAPTURE" != "1" ]]; then
+  echo "DECODER_DIAG_CAPTURE must be 0 or 1" >&2
+  exit 2
+fi
+if [[ "$DECODER_DIAG_CAPTURE" == "1" && "$STORE_AGENT_ORDERS" != "1" ]]; then
+  echo "DECODER_DIAG_CAPTURE=1 requires STORE_AGENT_ORDERS=1" >&2
   exit 2
 fi
 case "$AGENT_ORDER_MODE" in
@@ -112,6 +121,10 @@ fi
 if [[ "$STORE_AGENT_ORDERS" == "1" ]]; then
   args+=(--store_agent_orders)
 fi
+if [[ "$DECODER_DIAG_CAPTURE" == "1" ]]; then
+  args+=(--decoder_diag_capture_dir "$LOG_DIR")
+  args+=(--decoder_diag_capture_id "${LOG_METHOD_NAME}_seed${SEED}_${STAMP}")
+fi
 
 # Work in a subshell when tee captures output; pipefail ensures that a
 # failing Python/SMAC process still causes this launcher to fail.
@@ -144,6 +157,7 @@ run_training() {
     "$LOG_METHOD_NAME" "$MAP" "$GPU_ID" "$SEED" "$NUM_ENV_STEPS" "$PPO_EPOCH" "$CLIP_PARAM"
   printf 'agent_order_mode=%s agent_order_seed=%s\n' "$AGENT_ORDER_MODE" "$AGENT_ORDER_SEED"
   printf 'store_agent_orders=%s\n' "$STORE_AGENT_ORDERS"
+  printf 'decoder_diag_capture=%s\n' "$DECODER_DIAG_CAPTURE"
   printf 'rollout_threads=%s training_threads=%s eval_threads=%s eval_episodes=%s use_eval=%s\n' \
     "$N_ROLLOUT_THREADS" "$N_TRAINING_THREADS" "$N_EVAL_ROLLOUT_THREADS" "$EVAL_EPISODES" "$USE_EVAL"
   printf 'repository_root=%s\nlog_file=%s\n' "$REPO_ROOT" "$LOG_FILE"
