@@ -92,8 +92,12 @@ def legal_action_kl_probe(decoder, obs_rep, obs, actions,
             ref_logits = decoder(shift, obs_rep, obs)
             if ref_logits.shape != (b, n, a):
                 raise ValueError("decoder must output [B,N,A] logits")
+            # Only the KL reduction uses float64. The decoder itself
+            # remains in its original dtype/architecture. This prevents
+            # cancellation when true conditional KL is far below the
+            # float32 log-softmax precision (e.g. 1e-9).
             reference_log = F.log_softmax(
-                ref_logits.masked_fill(~legal, -1e9), -1)
+                ref_logits.double().masked_fill(~legal, float("-inf")), -1)
 
             # Extract only legal alternatives. A single scatter-add over
             # the original [B,N,N] pair tensor accumulates their KL.
@@ -115,10 +119,15 @@ def legal_action_kl_probe(decoder, obs_rep, obs, actions,
                     cf_shift, obs_rep[batch_idx], obs[batch_idx])
                 if cf_logits.shape != (size, n, a):
                     raise ValueError("decoder counterfactual output shape mismatch")
+                allowed = legal[batch_idx]
                 cf_log = F.log_softmax(
-                    cf_logits.masked_fill(~legal[batch_idx], -1e9), -1)
+                    cf_logits.double().masked_fill(~allowed, float("-inf")), -1)
                 ref = reference_log[batch_idx]
-                kl = (ref.exp() * (ref - cf_log)).sum(-1).clamp_min(0)
+                # 0 * (-inf - -inf) is NaN; illegal actions contribute
+                # exactly zero and are excluded BEFORE summation.
+                delta = torch.where(
+                    allowed, ref - cf_log, torch.zeros_like(cf_log))
+                kl = (ref.exp() * delta).sum(-1).clamp_min(0).to(scores.dtype)
                 successor_ids = all_targets.expand(size, n)
                 successor_valid = successor_ids > source_idx.unsqueeze(1)
                 batch_out = batch_idx.unsqueeze(1).expand(size, n)
