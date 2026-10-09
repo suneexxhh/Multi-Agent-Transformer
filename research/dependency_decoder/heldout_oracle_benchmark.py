@@ -119,3 +119,63 @@ def direction_metrics(scores, counts, graph, margin=0.05):
         false_positive_rate=fp / max(fp + tn, 1),
         abstained_pairs=int((measured & ~mask).sum().item()),
     )
+
+
+
+@torch.no_grad()
+def calibrate_scorer_threshold(preference, graph, max_false_positive_rate=0.05):
+    """Select a threshold on a SEPARATE synthetic calibration split only.
+
+    The threshold is selected for best directed-edge recall under an
+    empirical measured-negative false positive rate limit. It must not
+    be tuned on held-out test graphs, and is NOT transferable to SMAC.
+    """
+    if (preference.ndim != 3 or graph.shape != preference.shape or
+            preference.shape[-1] != preference.shape[-2] or
+            graph.dtype != torch.bool):
+        raise ValueError("preference and graph must be [B,N,N]")
+    if not 0 <= max_false_positive_rate <= 1:
+        raise ValueError("false positive budget must be in [0,1]")
+    n = preference.shape[-1]
+    offdiag = ~torch.eye(n, device=graph.device, dtype=torch.bool)
+    positive = graph & offdiag
+    negative = ~graph & offdiag
+    total_pos = int(positive.sum())
+    total_neg = int(negative.sum())
+    if total_pos == 0 or total_neg == 0:
+        raise ValueError("calibration requires positive and negative graph edges")
+    best_thr, best_recall = 1.0, -1.0  # 1.0 safely abstains
+    for thr in torch.linspace(0.50, 0.999, 200):
+        prediction = (preference > thr) & offdiag
+        tp = int((prediction & positive).sum())
+        fp = int((prediction & negative).sum())
+        fpr = fp / total_neg
+        recall = tp / total_pos
+        if fpr <= max_false_positive_rate and recall > best_recall:
+            best_thr, best_recall = float(thr), recall
+    return best_thr
+
+
+@torch.no_grad()
+def scorer_graph_metrics(preference, graph, threshold):
+    """Edge-level metrics on independent test graphs; not a causal measure."""
+    if preference.shape != graph.shape or graph.dtype != torch.bool:
+        raise ValueError("graph truth must match preference shape")
+    if not 0.5 <= threshold <= 1.0:
+        raise ValueError("confidence threshold outside [0.5,1]")
+    n = graph.shape[-1]
+    offdiag = ~torch.eye(n, device=graph.device, dtype=torch.bool)
+    predicted = (preference > threshold) & offdiag
+    positive = graph & offdiag
+    negative = ~graph & offdiag
+    tp = int((predicted & positive).sum())
+    fp = int((predicted & negative).sum())
+    total_positive = int(positive.sum())
+    total_negative = int(negative.sum())
+    return dict(
+        tp=tp, fp=fp,
+        false_positive_rate=fp / max(total_negative, 1),
+        recall=tp / max(total_positive, 1),
+        precision=tp / max(tp+fp, 1),
+        threshold=threshold,
+    )
