@@ -1,10 +1,13 @@
 # MAT Decoder V1 — read-only frozen checkpoint diagnostic protocol
 
-**Status:** artifact-capture and analysis have CPU unit tests. A restricted
-GPU 0 / `new_titans` / SMAC `3m` request was submitted on 2026-10-09
-for one matching real snapshot and checkpoint. Check the private run
-[37916803303](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37916803303)
-for its **actual** success, error logs, and artifact; a request is not a result.
+**Status: real SMAC and offline diagnostic verified, 2026-10-09.**
+The restricted private [GPU 0 Run #37916803303](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37916803303)
+completed successfully on `new_titans` with one SMAC `3m` environment,
+2,000 training steps, PPO epoch 1 and no evaluation. The captured snapshot,
+the exact matching weights and the offline CPU-only report were uploaded
+as [private Artifact #11610860445](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37916803303/artifacts/11610860445).
+These are **functionality/provenance diagnostics**, not trained-policy
+coordination or causal-discovery results.
 
 ## Output provenance
 
@@ -56,6 +59,47 @@ the original training configuration; this is a strict checkpoint
 load, so a mismatch fails rather than silently accepting missing
 weights. For the default SMAC smoke script these are **1, 64, 1**.
 SMAC MAT defaults to `encode_state=False`.
+
+## Measured real SMAC sample (one observation context)
+
+The actual files share this prefix:
+
+```text
+mat/scripts/logs/MAT_obs_norm_seed1_20261009_182212_553948306
+```
+
+Log: `<prefix>.log`, snapshot: `<prefix>_snapshot.npz`,
+weights: `<prefix>_transformer.pt`, JSON: `<prefix>_diagnostic.json`.
+
+The **real** CPU diagnostic reported:
+
+| Item | Observed value |
+| --- | ---: |
+| SMAC observation contexts | 1 |
+| Agents and sampled histories | 3 agents; 8 histories |
+| Measurable directed pairs | 3 / 6 |
+| Bidirectionally measurable pairs | 0 |
+| Max sampled vs teacher-forced log-prob error | 0.0 |
+| Mean conditional KL among measured pairs | 2.511641916669305e-08 |
+| History-measurement coverage | 1.0 (among the 3 measurable pairs) |
+| Minimum effective history sample size | 8.0 |
+| CPU sampling / likelihood / intervention kernel times | 0.009379 / 0.003115 / 0.006850 s |
+
+These timings exclude Python startup and model loading. They are single,
+short-run routine timings, **not** robust wall-clock benchmarking.
+The near-zero conditional KL is consistent with a short, nearly untrained
+policy and finite-precision effects; it is **not** evidence that
+true SMAC agent dependencies are absent. One ordering observes only
+3/6 directed pairs, so it cannot supply bidirectionally verified
+pseudo-labels. An ESS of 8 here reflects eight equal-weight measurable
+samples; it does not imply low variance or statistical confidence.
+
+A fresh checkpoint was saved at the beginning of episode index 1
+(after one 100-step rollout/update), exactly before its paired action
+sample. This policy is not converged; multi-seed SMAC win-rate claims
+would be inappropriate. Normal SMAC training did finish with exit code
+0 and the controlled artifact was uploaded, without modifying any
+GPU 1/2 process.
 
 ## Math and interpretation
 
