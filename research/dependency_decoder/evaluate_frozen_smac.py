@@ -28,14 +28,8 @@ def parse_native_eval_win_rate(output, episodes):
 def evaluate_frozen_checkpoint(checkpoint, map_name="3m", seed=1,
                                n_eval_episodes=32, gpu=True):
     """Run one bounded, native deterministic SMAC evaluation; no training."""
-    import numpy as np
-    import torch
-
-    from mat.config import get_config
-    from mat.scripts.train.train_smac import parse_args, make_eval_env
-    from mat.envs.starcraft2.smac_maps import get_map_params
-    from mat.runner.shared.smac_runner import SMACRunner
-
+    # Reject invalid calls before importing StarCraftII or constructing
+    # any process. This also makes CPU CI independent of PySC2 runtime.
     if not isinstance(n_eval_episodes, int) or not 1 <= n_eval_episodes <= 256:
         raise ValueError("eval episodes must be integer 1..256")
     if not isinstance(seed, int) or not 0 <= seed < 2**31:
@@ -44,6 +38,13 @@ def evaluate_frozen_checkpoint(checkpoint, map_name="3m", seed=1,
         raise ValueError("this restricted research evaluator supports SMAC 3m only")
     if not Path(checkpoint).is_file():
         raise FileNotFoundError(checkpoint)
+
+    import numpy as np
+    import torch
+    from mat.config import get_config
+    from mat.scripts.train.train_smac import parse_args, make_eval_env
+    from mat.envs.starcraft2.smac_maps import get_map_params
+    from mat.runner.shared.smac_runner import SMACRunner
 
     args = parse_args([
         "--env_name", "StarCraft2", "--algorithm_name", "mat",
