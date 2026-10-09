@@ -35,8 +35,8 @@ def evaluate_frozen_checkpoint(checkpoint, map_name="3m", seed=1,
         raise ValueError("eval episodes must be integer 1..256")
     if not isinstance(seed, int) or not 0 <= seed < 2**31:
         raise ValueError("invalid evaluation seed")
-    if map_name not in ("3m", "3s5z"):
-        raise ValueError("the frozen research evaluator supports only SMAC 3m and 3s5z")
+    if map_name not in ("3m", "3s5z", "3s5z_vs_3s6z", "6h_vs_8z"):
+        raise ValueError("frozen research evaluator allows only reviewed SMAC benchmark maps")
     if agent_order_mode not in ("identity", "obs_norm", "random_fixed"):
         raise ValueError("unrecognized MAT agent ordering mode")
     if not Path(checkpoint).is_file():
