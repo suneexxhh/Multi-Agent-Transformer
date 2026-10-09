@@ -9,6 +9,11 @@ from mat.algorithms.utils.transformer_act import discrete_autoregreesive_act
 from mat.algorithms.utils.transformer_act import discrete_parallel_act
 from mat.algorithms.utils.transformer_act import continuous_autoregreesive_act
 from mat.algorithms.utils.transformer_act import continuous_parallel_act
+from mat.algorithms.utils.transformer_act import (
+    discrete_autoregreesive_ordered_act, discrete_parallel_ordered_act,
+    continuous_autoregreesive_ordered_act, continuous_parallel_ordered_act,
+)
+from mat.algorithms.mat.algorithm.agent_ordering import compute_agent_order
 
 def init_(m, gain=0.01, activate=False):
     if activate:
@@ -225,7 +230,8 @@ class MultiAgentTransformer(nn.Module):
 
     def __init__(self, state_dim, obs_dim, action_dim, n_agent,
                  n_block, n_embd, n_head, encode_state=False, device=torch.device("cpu"),
-                 action_type='Discrete', dec_actor=False, share_actor=False):
+                 action_type='Discrete', dec_actor=False, share_actor=False,
+                 agent_order_mode='identity', agent_order_seed=1):
         super(MultiAgentTransformer, self).__init__()
 
         self.n_agent = n_agent
@@ -233,6 +239,10 @@ class MultiAgentTransformer(nn.Module):
         self.tpdv = dict(dtype=torch.float32, device=device)
         self.action_type = action_type
         self.device = device
+        self.agent_order_mode = agent_order_mode
+        self.agent_order_seed = agent_order_seed
+        if dec_actor and agent_order_mode != 'identity':
+            raise ValueError("V0 agent ordering only supports Transformer Decoder (mat), not dec_actor.")
 
         # state unused
         state_dim = 37
@@ -265,13 +275,29 @@ class MultiAgentTransformer(nn.Module):
 
         batch_size = np.shape(state)[0]
         v_loc, obs_rep = self.encoder(state, obs)
+        agent_order = None
+        if self.agent_order_mode != 'identity':
+            agent_order = compute_agent_order(obs, self.agent_order_mode, self.agent_order_seed)
         if self.action_type == 'Discrete':
             action = action.long()
-            action_log, entropy = discrete_parallel_act(self.decoder, obs_rep, obs, action, batch_size,
-                                                        self.n_agent, self.action_dim, self.tpdv, available_actions)
+            if agent_order is None:
+                action_log, entropy = discrete_parallel_act(
+                    self.decoder, obs_rep, obs, action, batch_size,
+                    self.n_agent, self.action_dim, self.tpdv, available_actions)
+            else:
+                action_log, entropy = discrete_parallel_ordered_act(
+                    self.decoder, obs_rep, obs, action, batch_size,
+                    self.n_agent, self.action_dim, self.tpdv,
+                    agent_order, available_actions)
         else:
-            action_log, entropy = continuous_parallel_act(self.decoder, obs_rep, obs, action, batch_size,
-                                                          self.n_agent, self.action_dim, self.tpdv)
+            if agent_order is None:
+                action_log, entropy = continuous_parallel_act(
+                    self.decoder, obs_rep, obs, action, batch_size,
+                    self.n_agent, self.action_dim, self.tpdv)
+            else:
+                action_log, entropy = continuous_parallel_ordered_act(
+                    self.decoder, obs_rep, obs, action, batch_size,
+                    self.n_agent, self.action_dim, self.tpdv, agent_order)
 
         return action_log, v_loc, entropy
 
@@ -287,14 +313,28 @@ class MultiAgentTransformer(nn.Module):
 
         batch_size = np.shape(obs)[0]
         v_loc, obs_rep = self.encoder(state, obs)
+        agent_order = None
+        if self.agent_order_mode != 'identity':
+            agent_order = compute_agent_order(obs, self.agent_order_mode, self.agent_order_seed)
         if self.action_type == "Discrete":
-            output_action, output_action_log = discrete_autoregreesive_act(self.decoder, obs_rep, obs, batch_size,
-                                                                           self.n_agent, self.action_dim, self.tpdv,
-                                                                           available_actions, deterministic)
+            if agent_order is None:
+                output_action, output_action_log = discrete_autoregreesive_act(
+                    self.decoder, obs_rep, obs, batch_size, self.n_agent,
+                    self.action_dim, self.tpdv, available_actions, deterministic)
+            else:
+                output_action, output_action_log = discrete_autoregreesive_ordered_act(
+                    self.decoder, obs_rep, obs, batch_size, self.n_agent,
+                    self.action_dim, self.tpdv, agent_order,
+                    available_actions, deterministic)
         else:
-            output_action, output_action_log = continuous_autoregreesive_act(self.decoder, obs_rep, obs, batch_size,
-                                                                             self.n_agent, self.action_dim, self.tpdv,
-                                                                             deterministic)
+            if agent_order is None:
+                output_action, output_action_log = continuous_autoregreesive_act(
+                    self.decoder, obs_rep, obs, batch_size, self.n_agent,
+                    self.action_dim, self.tpdv, deterministic)
+            else:
+                output_action, output_action_log = continuous_autoregreesive_ordered_act(
+                    self.decoder, obs_rep, obs, batch_size, self.n_agent,
+                    self.action_dim, self.tpdv, agent_order, deterministic)
 
         return output_action, output_action_log, v_loc
 
