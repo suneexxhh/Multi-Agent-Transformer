@@ -74,7 +74,8 @@ args=(
 echo "MAT Decoder Auto Research / original Encoder-Critic baseline"
 printf 'map=%s gpu=%s seed=%s steps=%s ppo_epoch=%s clip=%s\n' \
   "$MAP" "$GPU_ID" "$SEED" "$NUM_ENV_STEPS" "$PPO_EPOCH" "$CLIP_PARAM"
-printf 'agent_order_mode=%s agent_order_seed=%s\n' "$AGENT_ORDER_MODE" "$AGENT_ORDER_SEED"\nprintf 'repository_root=%s\nlog_file=%s\n' "$REPO_ROOT" "$LOG_FILE"
+printf 'agent_order_mode=%s agent_order_seed=%s\n' "$AGENT_ORDER_MODE" "$AGENT_ORDER_SEED"
+printf 'repository_root=%s\nlog_file=%s\n' "$REPO_ROOT" "$LOG_FILE"
 printf 'command: CUDA_VISIBLE_DEVICES=%q %q -u train/train_smac.py ' "$GPU_ID" "$PYTHON_BIN"
 printf '%q ' "${args[@]}"
 printf '\n'
