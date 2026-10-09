@@ -378,7 +378,10 @@ E_p[C_p] ~ sum_h w_h * C_p(a^(h))
 
 This is self-normalized importance sampling (**SNIS**) at a fixed
 observation and fixed ordering, NOT a probability for the sampled
-dataset and NOT an exact or unbiased finite-H estimator.
+dataset and NOT an exact or unbiased finite-H estimator. The helper
+accepts an optional `min_ess` to **refuse** heavily degenerate
+weights; in that case gather better-support samples rather than
+creating overconfident precedence pseudo-labels.
 The target history KL `C_p` must be computed with the TARGET
 Decoder, not reused from behavior `C_q`, unless the conditional
 action-sensitivity functions have been independently shown equal.
