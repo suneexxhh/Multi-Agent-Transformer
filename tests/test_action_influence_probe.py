@@ -4,7 +4,9 @@ import unittest
 import torch
 from torch import nn
 
-from research.dependency_decoder.action_influence_probe import legal_action_kl_probe
+from research.dependency_decoder.action_influence_probe import (
+    legal_action_kl_probe, combine_order_probes, conservative_precedence_targets,
+)
 from mat.algorithms.mat.algorithm.ma_transformer import MultiAgentTransformer
 
 
@@ -38,7 +40,7 @@ class TestActionInfluenceProbe(unittest.TestCase):
         rep, obs, actions, legal = self._inputs()
         scores = legal_action_kl_probe(decoder, rep, obs, actions, legal)
         self.assertEqual(scores.shape, (2, 3, 3))
-        self.assertEqual(decoder.forward_calls, [2, 4])
+        self.assertEqual(decoder.forward_calls, [2, 8])
         self.assertTrue(bool((scores[:, 0, 2] > 0.25).all()))
         masked = scores.clone()
         masked[:, 0, 2] = 0
@@ -101,6 +103,85 @@ class TestActionInfluenceProbe(unittest.TestCase):
         self.assertTrue(torch.equal(
             scores.masked_select(impossible),
             torch.zeros_like(scores).masked_select(impossible)))
+
+    def test_all_legal_alternatives_are_averaged_and_chunked(self):
+        # Decoder responds ONLY to alternative action 2, not action 1.
+        # Choosing the first legal alternative would miss the dependency.
+        class ActionTwoOnlyDecoder(nn.Module):
+            def forward(self, shifted, rep, obs):
+                logits = shifted.new_zeros(shifted.shape[0], 3, 3)
+                logits[:, 2, 1] = 5.0 * shifted[:, 1, 3]
+                return logits
+
+        decoder = ActionTwoOnlyDecoder().eval()
+        rep, obs, actions, legal = self._inputs(n_batch=1)
+        averaged, valid = legal_action_kl_probe(
+            decoder, rep, obs, actions, legal, return_valid=True,
+            max_counterfactual_batch=1)
+        self.assertGreater(averaged[0, 0, 2].item(), 0.05)
+        self.assertTrue(valid[0, 0, 2].item())
+        self.assertFalse(valid[0, 2, 0].item())
+        self.assertFalse(valid[0, 0, 0].item())
+
+        # Manually exclude action 2 as an alternative: measured zero,
+        # but the pair remains identifiable (unlike an untested pair).
+        legal[:, 0, 2] = 0
+        no_effect, no_effect_valid = legal_action_kl_probe(
+            decoder, rep, obs, actions, legal, return_valid=True)
+        self.assertLess(no_effect[0, 0, 2].item(), 1e-7)
+        self.assertTrue(no_effect_valid[0, 0, 2].item())
+        # Lack of any predecessor alternative is UNKNOWN, not a zero edge.
+        legal[:, 0, 1] = 0
+        untested, unknown = legal_action_kl_probe(
+            decoder, rep, obs, actions, legal, return_valid=True)
+        self.assertEqual(untested[0, 0, 2].item(), 0)
+        self.assertFalse(unknown[0, 0, 2].item())
+
+    def test_order_coverage_and_conservative_targets(self):
+        # Only orientation observed in a single order; opposite
+        # orientation must NOT be trained as a negative pair.
+        first = torch.tensor([[[0., 0.7, 0.4],
+                               [0., 0., 0.2],
+                               [0., 0., 0.]]])
+        valid_first = torch.tensor([[[False, True, True],
+                                    [False, False, True],
+                                    [False, False, False]]])
+        scores, counts = combine_order_probes(
+            first.unsqueeze(0), valid_first.unsqueeze(0))
+        labels, trainmask = conservative_precedence_targets(scores, counts)
+        self.assertFalse(trainmask.any().item())
+        # Measured reverse orientation in a second order context.
+        second = torch.tensor([[[0., 0., 0.],
+                                [0.1, 0., 0.],
+                                [0.3, 0., 0.]]])
+        valid_second = torch.tensor([[[False, False, False],
+                                      [True, False, False],
+                                      [True, False, False]]])
+        s, c = combine_order_probes(
+            torch.stack((first[0], second[0])).unsqueeze(1),
+            torch.stack((valid_first[0], valid_second[0])).unsqueeze(1))
+        y, mask = conservative_precedence_targets(s, c, margin=0.05)
+        self.assertTrue(mask[0, 0, 1].item())
+        self.assertEqual(y[0, 0, 1].item(), 1.)
+        self.assertEqual(y[0, 1, 0].item(), 0.)
+        self.assertTrue(mask[0, 0, 2].item())
+        self.assertFalse(mask[0, 1, 2].item())
+        self.assertFalse(mask[0].diagonal().any().item())
+        with self.assertRaises(ValueError):
+            conservative_precedence_targets(s, c, margin=-0.1)
+
+    def test_unpermuted_batchwise_coverage_and_memory_cap(self):
+        decoder = OnlyFirstToThirdToyDecoder().eval()
+        rep, obs, actions, legal = self._inputs(n_batch=2)
+        scores, valid = legal_action_kl_probe(
+            decoder, rep, obs, actions, legal, return_valid=True,
+            max_counterfactual_batch=3)
+        self.assertEqual(scores.shape, (2, 3, 3))
+        self.assertEqual(valid.shape, scores.shape)
+        self.assertTrue(torch.isfinite(scores).all())
+        self.assertEqual(decoder.forward_calls, [2, 3, 3, 2])
+        self.assertTrue(valid[:, 0, 2].all().item())
+        self.assertTrue((scores[:, 0, 2] > 0.25).all().item())
 
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA not available")
     def test_cuda_probe(self):
