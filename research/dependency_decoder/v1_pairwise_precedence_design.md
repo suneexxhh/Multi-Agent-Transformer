@@ -124,7 +124,11 @@ expectation under the learned policy, nor a causal influence on game
 dynamics. On a given ordering context, the probe can evaluate only
 `rank_sigma(j) < rank_sigma(i)` and only when `A_j^-` is nonempty.
 The code exposes both `scores[B,N,N]` and `valid[B,N,N]`; an
-unknown pair is never silently used as a negative observation.
+unknown pair is never silently used as a negative observation. A
+source must have a different legal action AND its target must have at
+least two legal actions: a single-legal-action target has a point-mass
+policy whose legal distribution cannot respond, so it is unidentifiable.
+Even a measured zero does not rule out an effect via an illegal action.
 
 All valid counterfactuals are batched together. The diagnostic calls
 the decoder once for the reference state and once for each bounded
@@ -187,6 +191,34 @@ structural dependence rule: a scorer respecting the original priority
 rule is not expected to generalize. The result should be reported as a
 limitation, not silently removed. Synthetic oracle accuracy is not
 evidence that PPO learns improved MARL coordination.
+
+### Reproducible held-out quantitative results (synthetic only)
+
+On 2026-10-09, [CPU CI Run #37898081067](https://github.com/suneexxhh/Multi-Agent-Transformer/actions/runs/37898081067)
+confirmed the deterministic seed-8302 protocol with 72 **training**
+4-agent contexts, 48 independent **calibration** 4-agent contexts,
+and 56 independent **test** 5-agent contexts. The scorer receives
+scalar traits but not ground-truth graph edges. Its calibrated
+threshold was `0.97643` (on calibration FPR `0.04941`), and the
+one-time held-out evaluation reported:
+
+| Scenario | Precision | Recall | FPR | TP | FP |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Same scalar-rule, unseen 5-agent graphs | 0.89815 | 1.00000 | 0.03981 | 291 | 33 |
+| Opposite structural-rule negative control | not used | 0.00000 | 0.52492 | -- | -- |
+
+**The opposite-rule test is a separate intentionally specified
+ranker that follows the original direction**, not an unbiased
+estimate of an independently retrained model's out-of-distribution
+performance. It shows why priority-rule transfer must not be
+assumed when dependencies change.
+
+These results are for a deterministic known graph-generation rule,
+with synthetic labeled calibration access that **SMAC does not
+provide**. They cannot be reported as SMAC graph accuracy,
+model causality, or evidence of an improvement in episodic return.
+The CPU CI run had 43 total unit tests, 39 passed and 4
+CUDA-dependent tests skipped.
 
 ### Topological-layer parallelism: not yet implemented
 
