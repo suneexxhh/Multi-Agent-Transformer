@@ -13,7 +13,7 @@ from mat.algorithms.utils.transformer_act import (
     discrete_autoregreesive_ordered_act, discrete_parallel_ordered_act,
     continuous_autoregreesive_ordered_act, continuous_parallel_ordered_act,
 )
-from mat.algorithms.mat.algorithm.agent_ordering import compute_agent_order
+from mat.algorithms.mat.algorithm.agent_ordering import compute_agent_order, validate_agent_order
 
 def init_(m, gain=0.01, activate=False):
     if activate:
@@ -256,7 +256,7 @@ class MultiAgentTransformer(nn.Module):
         if self.action_type != 'Discrete':
             self.decoder.zero_std(self.device)
 
-    def forward(self, state, obs, action, available_actions=None):
+    def forward(self, state, obs, action, available_actions=None, agent_order=None):
         # state: (batch, n_agent, state_dim)
         # obs: (batch, n_agent, obs_dim)
         # action: (batch, n_agent, 1)
@@ -275,8 +275,10 @@ class MultiAgentTransformer(nn.Module):
 
         batch_size = np.shape(state)[0]
         v_loc, obs_rep = self.encoder(state, obs)
-        agent_order = None
-        if self.agent_order_mode != 'identity':
+        if agent_order is not None:
+            agent_order = validate_agent_order(
+                agent_order, batch_size, self.n_agent, obs.device)
+        elif self.agent_order_mode != 'identity':
             agent_order = compute_agent_order(obs, self.agent_order_mode, self.agent_order_seed)
         if self.action_type == 'Discrete':
             action = action.long()
@@ -301,7 +303,7 @@ class MultiAgentTransformer(nn.Module):
 
         return action_log, v_loc, entropy
 
-    def get_actions(self, state, obs, available_actions=None, deterministic=False):
+    def get_actions(self, state, obs, available_actions=None, deterministic=False,\n                    agent_order=None, return_agent_order=False):
         # state unused
         ori_shape = np.shape(obs)
         state = np.zeros((*ori_shape[:-1], 37), dtype=np.float32)
@@ -313,8 +315,10 @@ class MultiAgentTransformer(nn.Module):
 
         batch_size = np.shape(obs)[0]
         v_loc, obs_rep = self.encoder(state, obs)
-        agent_order = None
-        if self.agent_order_mode != 'identity':
+        if agent_order is not None:
+            agent_order = validate_agent_order(
+                agent_order, batch_size, self.n_agent, obs.device)
+        elif self.agent_order_mode != 'identity':
             agent_order = compute_agent_order(obs, self.agent_order_mode, self.agent_order_seed)
         if self.action_type == "Discrete":
             if agent_order is None:
@@ -336,6 +340,12 @@ class MultiAgentTransformer(nn.Module):
                     self.decoder, obs_rep, obs, batch_size, self.n_agent,
                     self.action_dim, self.tpdv, agent_order, deterministic)
 
+        if return_agent_order:
+            # This is the exact rollout permutation, not a future
+            # recomputation of the scorer after PPO has updated weights.
+            stored_order = (agent_order if agent_order is not None else
+                            compute_agent_order(obs, mode="identity"))
+            return output_action, output_action_log, v_loc, stored_order.detach()
         return output_action, output_action_log, v_loc
 
     def get_values(self, state, obs, available_actions=None):
