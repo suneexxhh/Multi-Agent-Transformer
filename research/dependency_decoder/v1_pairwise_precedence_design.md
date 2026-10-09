@@ -123,6 +123,51 @@ evaluate whether learned precedence predicts held-out sensitivity
 or improves return. Do not use arbitrary observation norm as a
 label for causal dependence.
 
+### Robust offline sensitivity and identifiability (implemented)
+
+The offline `action_influence_probe.py` now enumerates **all legal
+alternative actions** other than the trajectory action for each predecessor,
+without adding model parameters or modifying PPO:
+
+```text
+A_j^- = A_j^legal \\ {a_j}
+C_(j->i)(o,a,sigma) =
+    1 / |A_j^-| * sum_(a'_j in A_j^-)
+       KL[ pi_theta(. | o,a_<i,sigma) ||
+           pi_theta(. | o,a_<i with a_j <- a'_j,sigma) ] .
+```
+
+This **uniform average over discrete action alternatives** is not an
+expectation under the learned policy, nor a causal influence on game
+dynamics. On a given ordering context, the probe can evaluate only
+`rank_sigma(j) < rank_sigma(i)` and only when `A_j^-` is nonempty.
+The code exposes both `scores[B,N,N]` and `valid[B,N,N]`; an
+unknown pair is never silently used as a negative observation.
+
+All valid counterfactuals are batched together. The diagnostic calls
+the decoder once for the reference state and once for each bounded
+counterfactual chunk (default upper bound: 256 interventions), not
+once per pair. This limits peak activation memory but does not make
+the overall cost constant: there can be `O(B*N*A)` alternative
+contexts, each evaluating an entire `N`-agent decoder.
+
+`combine_order_probes` combines independently evaluated ordering
+contexts into averaged directional scores and measurement counts. A
+`conservative_precedence_targets` helper only creates optional
+**pseudo-labels** when both directions have been separately observed
+and the score margin exceeds a specified threshold. Different orders
+change the conditional factorization, so even these labels can be
+confounded; they should NOT yet be used to train on real SMAC data.
+An all-zero score with no valid measurements is unknown, not evidence
+of independence.
+
+`tests/test_directional_oracle_supervision_v1.py` provides a
+controlled decoder with one known original-agent directed link
+0 -> 2. The tests measure it under one ordering, measure the reverse
+orientation under another, reject unknown edges, then verify that the
+low-rank scorer can learn the known directed label. This establishes
+synthetic signal compatibility only, not predictive validity on SMAC.
+
 ### Topological-layer parallelism: not yet implemented
 
 The original masked self-attention decoder does **not** automatically
@@ -142,6 +187,13 @@ claiming a speedup.
 - `tests/test_dependency_ordering_v1.py`:
   reciprocity, diagonal neutral case, parameter count, stable tie-breaking,
   DAG acyclicity, gradient propagation, and controlled toy supervision.
+- `research/dependency_decoder/action_influence_probe.py`:
+  chunked all-legal-action KL contrasts, explicit valid-pair masks,
+  multi-order coverage and optional high-confidence *proxy* labels.
+- `tests/test_action_influence_probe.py` and
+  `tests/test_directional_oracle_supervision_v1.py`:
+  legal alternatives, unknown versus measured-zero edges, original agent
+  ID restoration, synthetic directed-edge recovery and masked supervision.
 - `mat/algorithms/mat/algorithm/ma_transformer.py`,
   `mat/algorithms/mat/algorithm/transformer_policy.py`,
   `mat/utils/shared_buffer.py`, `mat/algorithms/mat/mat_trainer.py`,
@@ -164,11 +216,11 @@ claiming a speedup.
 1. Keep the low-rank scorer isolated; compare it with the previous
    pair-MLP scoring implementation on synthetic known relationships
    (parameter count, ranking accuracy, inference overhead).
-2. The diagnostic-only legal-action KL probe and synthetic edge test
-   are implemented; next quantify sensitivity agreement on multiple
-   controlled toy games, compare several *legal* alternatives and
-   determine which directed pairs are unobserved under one order.
-   Do not use its KL values as labels before that validation.
+2. The all-legal-action KL diagnostic, explicit observability mask
+   and a bidirectional-order synthetic oracle are implemented. Next
+   evaluate held-out dependencies and calibrate the KL margin against
+   false-positive associations in more diverse controlled toy games;
+   do not infer environmental causality from a conditional-policy probe.
 3. Define a training/evaluation protocol before integrating the
    learned graph. Add scorer freeze boundaries and an explicit stored
    permutation regression across scorer-weight changes.
