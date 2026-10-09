@@ -341,6 +341,73 @@ expected priority rather than pretend it knows yet-unexecuted
 current-step actions. Nothing here implements learned graph PPO
 or graph-parallel autoregressive factorization.
 
+### Frozen MAT behavior-policy sampling and change of distribution (offline)
+
+`research/dependency_decoder/frozen_policy_sampling.py` now reuses
+**the original MAT ordered discrete autoregressive sampler** and
+**the original parallel teacher-forced log-probability evaluator**.
+A frozen eval-mode Decoder with fixed observations `o`, per-agent
+Encoder representations `h`, legal masks `L`, and agent permutation
+`sigma` generates H action vectors:
+
+```text
+a^(h) ~ q(a|o,sigma) = product_k
+    q(a_sigma[k] | o,a_sigma[<k],sigma)
+log q(a^(h)|o,sigma) = sum_k log q(a_sigma[k]^(h)|...)
+```
+
+All actions, conditional log-probabilities, and agent IDs are returned
+in the **original** agent order. The complete joint `logq` is
+recorded per sampled history. Real MAT Decoder sampling and
+teacher-forcing likelihoods have been compared and must agree for
+identical weights, order, legal masks and Encoder representations.
+The offline functions use chunked repeated observations, not
+allocations of `[H,B,N,D]` for all histories at once.
+
+If a second **frozen** target policy `p` has a different distribution
+but the SAME available action support and fixed `sigma`, score
+these same sampled actions under target Decoder and its corresponding
+target Encoder representations. For a saved history define:
+
+```text
+r_h = exp(log p(a^(h)|o,sigma) - log q(a^(h)|o,sigma))
+w_h = r_h / sum_t r_t     (numerically stable softmax)
+ESS = 1 / sum_h w_h^2
+E_p[C_p] ~ sum_h w_h * C_p(a^(h))
+```
+
+This is self-normalized importance sampling (**SNIS**) at a fixed
+observation and fixed ordering, NOT a probability for the sampled
+dataset and NOT an exact or unbiased finite-H estimator.
+The target history KL `C_p` must be computed with the TARGET
+Decoder, not reused from behavior `C_q`, unless the conditional
+action-sensitivity functions have been independently shown equal.
+**Reweighting cannot repair a change in the dependency mechanism.**
+The full proposal/target action support must coincide; dynamic
+legal masks, changing order distributions and unrecorded order
+probabilities invalidate naive action-only ratios. If the Encoder
+changes, recompute target representations with target Encoder.
+
+A real checkpoint must be held fixed for each sampling/probing
+pass: `decoder.eval()` disables training-mode randomness but
+does not itself prevent parameter updates by an external optimizer.
+No checkpoint or SMAC rollout data are loaded by this module.
+
+A fixed-seed toy with an AND conditional action mechanism and
+different parent-action logits tests known policy shift without
+changing the target interaction rule. With 2,400 histories sampled
+from behavior q, the CI reports behavior activation probability,
+SNIS-estimated target activation, analytical target probability,
+and ESS. A second counterexample explicitly changes the
+dependency mechanism and confirms `E_p[C_q]` need not equal
+`E_p[C_p]`. A stronger shift shows weight degeneracy and why
+low ESS should trigger abstention/new samples rather than confident
+candidate precedence labels.
+
+This adds **zero trainable parameters** and changes **no PPO loss**.
+Running many counterfactual decodes is an offline diagnostic cost,
+not a free improvement in action-generation speed.
+
 ### Topological-layer parallelism: not yet implemented
 
 The original masked self-attention decoder does **not** automatically
@@ -380,6 +447,11 @@ claiming a speedup.
   offline bounded history batches, weighted conditional KL mean,
   coverage mass, ESS, conservative reliability gates, rare-event
   maximum-KL negative control and no PPO integration.
+- `research/dependency_decoder/frozen_policy_sampling.py` and
+  `tests/test_frozen_policy_sampling.py`:
+  native frozen MAT autoregressive samples, exact teacher-forced joint
+  probabilities, log-space SNIS, overlap constraints, shifted conditional
+  mechanisms and ESS failure controls.
 - `mat/algorithms/mat/algorithm/ma_transformer.py`,
   `mat/algorithms/mat/algorithm/transformer_policy.py`,
   `mat/utils/shared_buffer.py`, `mat/algorithms/mat/mat_trainer.py`,
