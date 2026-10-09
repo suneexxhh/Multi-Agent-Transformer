@@ -523,6 +523,74 @@ performs this six-stage, two-bank diagnostic. None of these
 results may train pairwise precedence labels without separate
 held-out direction/coverage evidence and independent trajectories.
 
+## Six frozen checkpoints on the SAME SMAC inputs (verified)
+
+A more controlled archived CPU-only comparison,
+[Run #37926773351](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37926773351),
+evaluated all six archived frozen MAT checkpoints on two separately
+held-fixed SMAC observation/mask/order banks, each consisting of
+four original-agent contexts. Each checkpoint sampled 128
+**own-policy** joint-action histories. The run succeeded; see
+[artifact #11614098513](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37926773351/artifacts/11614098513)
+for its 12 JSON diagnostics and source verification.
+
+The per-bank set of measured predecessor-successor pairs is
+constant across checkpoints: 9/24 for the initial-state bank,
+7/24 for the 90k-state bank. This removes one confound present
+in comparing each training stage on its own evolving observations.
+
+| Model environment steps | Mean TV at fixed initial states | Mean TV at fixed 90k states |
+| ---: | ---: | ---: |
+| 0 | 2.2642355190782837e-07 | 2.1464606447807455e-07 |
+| 100 | 7.470497962458467e-07 | 6.261464591261756e-07 |
+| 1,000 | 2.9725435888394713e-04 | 2.951239584945142e-04 |
+| 10,000 | 4.059057682752609e-03 | 3.870528191328049e-02 |
+| 50,000 | 1.293928944505751e-04 | 3.8995014620013535e-04 |
+| 90,000 | 4.578216467052698e-03 | 5.673421546816826e-04 |
+
+This establishes a **nonmonotonic evolution of the frozen policies'
+conditional action sensitivity**, at both fixed context banks and
+with consistent legal-pair observability. It does **not** establish
+forgetting of useful team dependencies: stronger conditional-action
+sensitivity is not inherently better teamwork, nor is a high-KL
+policy guaranteed higher win rate. The six policies use the same
+architecture but different training steps and sampled action
+distributions. Each bank still represents only FOUR temporally
+adjacent SMAC observations, not independent episodes.
+
+### Distinguishing low KL/TV from action-policy concentration
+
+A policy with nearly deterministic preferred actions can exhibit
+small measured distribution changes even if its action history
+representation is complicated. The new optional zero-overhead
+entropy summary in `checkpoint_diagnostic.py` uses the SAME
+sampled per-agent log probabilities already computed by native
+MAT:
+
+```text
+a^(h) ~ pi_theta(. | o,L,sigma)
+H_hat_joint(o) = - (1/H) * sum_h log pi_theta(a^(h) | o,L,sigma)
+H_max(o,L) = sum_{agent j} log |A_j^legal(o)|
+H_hat_fraction = H_hat_joint / H_max   (when H_max > 0)
+```
+
+`H_hat_joint` is an unbiased Monte Carlo estimator of joint
+action entropy *at a fixed state*, and the finite sample
+estimate can be noisy. The per-observation Monte Carlo SE
+measures action-draw variability, not confidence across
+independent game trajectories. The probability capacity is a
+theoretical upper bound for the **true** entropy of the legal
+joint action distribution, not an ironclad upper bound on a
+finite-draw estimate. No new parameter or Decoder call is
+required. Inference and PPO stay identical.
+
+The separate CPU-only
+[entropy-augmented archived sweep](https://github.com/suneexxhh/MAT-Decoder-Experiments/actions/runs/37927267006)
+was initiated to inspect entropy and KL/TV on the same
+six-checkpoint two-bank inputs. Its actual numeric outcomes
+must be checked before interpreting any entropy-dependence
+relation; merely launching the workflow is not evidence.
+
 ## Math and interpretation
 
 1. Under a fixed observation, legal mask and stored permutation,
