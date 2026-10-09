@@ -31,11 +31,10 @@ class TestPairwisePrecedenceScorer(unittest.TestCase):
         m = PairwisePrecedenceScorer(obs_dim=1, hidden_dim=1)
         # Exactly prefer the agent with larger positive observation.
         with torch.no_grad():
-            m.pair_net[0].weight.fill_(0)
-            m.pair_net[0].weight[0, 0] = 1.0
-            m.pair_net[0].bias.zero_()
-            m.pair_net[2].weight.fill_(1.0)
-            m.pair_net[2].bias.zero_()
+            m.query.weight.fill_(1.0)
+            m.query.bias.zero_()
+            m.key.weight.zero_()
+            m.key.bias.fill_(1.0)
         obs = torch.tensor([[[1.], [3.], [2.]], [[2.], [2.], [2.]]])
         order = m.order(obs)
         self.assertEqual(order.tolist(), [[1, 2, 0], [0, 1, 2]])
@@ -76,6 +75,42 @@ class TestPairwisePrecedenceScorer(unittest.TestCase):
         mask[:, 0, 1] = True
         loss = m.supervised_loss(obs, p.detach(), valid_pairs=mask)
         self.assertTrue(torch.isfinite(loss))
+
+    def test_low_rank_parameter_budget_and_confident_acyclic_edges(self):
+        torch.manual_seed(509)
+        m = PairwisePrecedenceScorer(obs_dim=64, hidden_dim=8)
+        self.assertEqual(sum(p.numel() for p in m.parameters()),
+                         2 * (64 + 1) * 8)
+        tiny = PairwisePrecedenceScorer(obs_dim=1, hidden_dim=1)
+        with torch.no_grad():
+            tiny.query.weight.fill_(1)
+            tiny.query.bias.zero_()
+            tiny.key.weight.zero_()
+            tiny.key.bias.fill_(1)
+        obs = torch.tensor([[[10.], [0.], [-10.]]])
+        edges, order = tiny.precedence_dag(obs, threshold=0.7)
+        self.assertEqual(order.tolist(), [[0, 1, 2]])
+        expected = torch.tensor([[[False, True, True],
+                                  [False, False, True],
+                                  [False, False, False]]])
+        self.assertTrue(torch.equal(edges, expected))
+        # All graph edges must respect the produced ranking: no cycles.
+        rank = torch.empty_like(order)
+        rank.scatter_(1, order, torch.arange(3).expand_as(order))
+        self.assertTrue(((rank.unsqueeze(2) < rank.unsqueeze(1)) | ~edges).all())
+        self.assertEqual(edges.dtype, torch.bool)
+
+    def test_identical_features_do_not_fabricate_dependencies(self):
+        torch.manual_seed(506)
+        m = PairwisePrecedenceScorer(obs_dim=4)
+        obs = torch.zeros(2, 5, 4)
+        graph, order = m.precedence_dag(obs, threshold=0.65)
+        self.assertFalse(bool(graph.any()))
+        self.assertEqual(order.tolist(), [list(range(5)), list(range(5))])
+        self.assertTrue(torch.equal(m(obs), torch.full((2, 5, 5), 0.5)))
+        for invalid in (0.5, 1.0, -0.2):
+            with self.assertRaises(ValueError):
+                m.precedence_dag(obs, threshold=invalid)
 
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA not available")
     def test_cuda_forward_and_order(self):
