@@ -12,6 +12,7 @@ import torch
 from mat.algorithms.mat.algorithm.agent_ordering import validate_agent_order
 from mat.algorithms.mat.algorithm.ma_transformer import MultiAgentTransformer
 from mat.algorithms.mat.algorithm.transformer_policy import TransformerPolicy
+from mat.algorithms.mat.mat_trainer import MATTrainer
 from mat.utils.shared_buffer import SharedReplayBuffer
 
 
@@ -126,6 +127,46 @@ class TestStoredRolloutPermutation(unittest.TestCase):
         self.assertTrue(torch.allclose(l2, l2_eval, atol=2e-5))
         with self.assertRaises(ValueError):
             m(state, obs, acts, masks, agent_order=torch.tensor([[0, 0, 2], [0, 1, 2]]))
+
+    def test_ppo_update_receives_buffer_order_unchanged(self):
+        # Minimal trainer spy isolates the PPO->policy ordering boundary.
+        # Its parameterized outputs keep autograd and optimizer active.
+        class PolicySpy:
+            def __init__(self):
+                self.transformer = torch.nn.Linear(1, 1)
+                self.optimizer = torch.optim.Adam(self.transformer.parameters(), lr=1e-3)
+                self.last_order = None
+
+            def evaluate_actions(self, cent_obs, obs, rnn_a, rnn_c, actions,
+                                 masks, available_actions=None,
+                                 active_masks=None, agent_order=None):
+                self.last_order = agent_order.copy()
+                n = actions.shape[0]
+                outputs = self.transformer(torch.ones(n, 1))
+                return outputs, outputs, outputs.mean()
+
+        args = SimpleNamespace(
+            clip_param=0.2, ppo_epoch=1, num_mini_batch=1,
+            data_chunk_length=1, value_loss_coef=1.0, entropy_coef=0.01,
+            max_grad_norm=10, huber_delta=10,
+            use_recurrent_policy=False, use_naive_recurrent_policy=False,
+            use_max_grad_norm=True, use_clipped_value_loss=False,
+            use_huber_loss=False, use_valuenorm=False,
+            use_value_active_masks=False, use_policy_active_masks=False,
+            dec_actor=False)
+        buf = make_buffer(store=True)
+        orders = [
+            np.array([[2, 0, 1], [0, 2, 1]], dtype=np.int64),
+            np.array([[1, 2, 0], [1, 0, 2]], dtype=np.int64),
+        ]
+        for step, order in enumerate(orders):
+            insert_fake_rollout(buf, step, order)
+        sample = next(buf.feed_forward_generator_transformer(
+            np.ones_like(buf.advantages), num_mini_batch=1))
+        p = PolicySpy()
+        t = MATTrainer(args, p, num_agents=3)
+        t.ppo_update(sample)
+        self.assertTrue(np.array_equal(p.last_order, sample[-1]))
 
     def test_transformer_policy_transmits_saved_order(self):
         torch.manual_seed(604)
