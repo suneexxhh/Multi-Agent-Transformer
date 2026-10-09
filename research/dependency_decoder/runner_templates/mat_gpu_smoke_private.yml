@@ -1,0 +1,95 @@
+# COPY THIS FILE TO THE PRIVATE CONTROL REPOSITORY ONLY:
+# .github/workflows/mat-gpu-smoke.yml
+# NEVER register a server self-hosted runner to the public MAT source fork.
+# First use manual Actions > Run workflow, no automatic push trigger.
+name: MAT Decoder - restricted GPU smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      order_mode:
+        description: 'Agent ordering for the SMAC 3m smoke test'
+        required: true
+        type: choice
+        options:
+          - identity
+          - obs_norm
+          - random_fixed
+        default: obs_norm
+
+permissions:
+  contents: read
+
+# Prevent overlap of THIS workflow's requests. Do not run other SMAC jobs
+# outside this workflow on the same GPU without coordination.
+concurrency:
+  group: hk-mat-gpu0-smoke
+  cancel-in-progress: false
+
+jobs:
+  smac-3m-smoke:
+    runs-on: [self-hosted, linux, x64, hk-mat-gpu0]
+    timeout-minutes: 30
+    env:
+      CUDA_VISIBLE_DEVICES: "0"
+      SC2PATH: /home/sgg/StarCraftII
+      ORDER_MODE: ${{ inputs.order_mode }}
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout PINNED MAT public source revision
+        uses: actions/checkout@v4
+        with:
+          repository: suneexxhh/Multi-Agent-Transformer
+          # Validated research branch commit from 2026-10-09.
+          # Advance only after reviewing and testing a new commit.
+          ref: 62e249340b4767354b1eec1a48a6355fb29f4659
+          persist-credentials: false
+
+      - name: Validate GPU and Python environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 15s nvidia-smi -i 0
+          source /home/sgg/miniconda3/etc/profile.d/conda.sh
+          conda activate new_titans
+          python - <<'PY'
+          import torch
+          print("torch:", torch.__version__, "CUDA:", torch.version.cuda)
+          assert torch.cuda.is_available(), "CUDA unavailable"
+          print("visible GPUs:", torch.cuda.device_count())
+          PY
+          python -m unittest discover -s tests -v
+
+      - name: Run only one SC2 environment with bounded resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /home/sgg/miniconda3/etc/profile.d/conda.sh
+          conda activate new_titans
+          mkdir -p private_run_logs
+          # timeout -k sends a forced termination after its grace period.
+          # flock serializes this workflow's training against OTHER jobs
+          # that also acquire the same local lock.
+          flock -n /tmp/hk-mat-gpu0.lock \
+            timeout -k 30s 20m env \
+              NUM_ENV_STEPS=2000 \
+              PPO_EPOCH=1 \
+              N_ROLLOUT_THREADS=1 \
+              N_TRAINING_THREADS=2 \
+              USE_EVAL=0 \
+              AGENT_ORDER_MODE="$ORDER_MODE" \
+              EXP_TAG=gha_smoke \
+              bash mat/scripts/train_smac_research.sh 3m 0 1 \
+            2>&1 | tee private_run_logs/smoke.log
+
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smac-3m-smoke-log
+          path: |
+            private_run_logs/*.log
+            mat/scripts/logs/*.log
+          if-no-files-found: warn
+          retention-days: 7
