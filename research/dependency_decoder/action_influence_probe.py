@@ -14,7 +14,8 @@ from mat.algorithms.mat.algorithm.agent_ordering import (
 @torch.no_grad()
 def legal_action_kl_probe(decoder, obs_rep, obs, actions,
                           available_actions=None, agent_order=None,
-                          return_valid=False, max_counterfactual_batch=256):
+                          return_valid=False, max_counterfactual_batch=256,
+                          return_tv=False):
     """Mean intervention KL from each predecessor to each successor.
 
     Output scores[b,j,i] averages KL across *all* legal alternative
@@ -30,6 +31,10 @@ def legal_action_kl_probe(decoder, obs_rep, obs, actions,
 
     This is an average over available alternative *action IDs* conditional
     on a fixed context, not over a policy distribution or action histories.
+    Optional return_tv computes total variation from the SAME logits and
+    masks with no extra decoder calls. TV = 0.5 * sum_a |p(a)-q(a)|,
+    is bounded in [0,1], and must obey Pinsker: 2*TV^2 <= KL
+    up to numerical roundoff (for each measured intervention).
     """
     if decoder.training:
         raise ValueError("decoder.eval() required for reproducible probe")
@@ -68,6 +73,7 @@ def legal_action_kl_probe(decoder, obs_rep, obs, actions,
         legal = reorder_agents(legal, order)
 
     scores = obs_rep.new_zeros((b, n, n))
+    tv_scores = torch.zeros_like(scores) if return_tv else None
     valid = torch.zeros((b, n, n), dtype=torch.bool, device=obs.device)
     if n > 1:
         candidate = legal[:, :-1] & ~F.one_hot(
@@ -104,6 +110,7 @@ def legal_action_kl_probe(decoder, obs_rep, obs, actions,
             bi, ji, ai = candidate.nonzero(as_tuple=True)
             k = bi.numel()
             totals = scores.new_zeros((b, n, n))
+            tv_totals = torch.zeros_like(totals) if return_tv else None
             all_targets = torch.arange(n, device=obs.device)
             for start in range(0, k, max_counterfactual_batch):
                 stop = min(start + max_counterfactual_batch, k)
@@ -127,7 +134,11 @@ def legal_action_kl_probe(decoder, obs_rep, obs, actions,
                 # exactly zero and are excluded BEFORE summation.
                 delta = torch.where(
                     allowed, ref - cf_log, torch.zeros_like(cf_log))
-                kl = (ref.exp() * delta).sum(-1).clamp_min(0).to(scores.dtype)
+                ref_p = ref.exp()
+                kl = (ref_p * delta).sum(-1).clamp_min(0).to(scores.dtype)
+                if return_tv:
+                    tv = (0.5 * (ref_p - cf_log.exp()).abs().sum(-1)
+                          ).to(scores.dtype)
                 successor_ids = all_targets.expand(size, n)
                 successor_valid = successor_ids > source_idx.unsqueeze(1)
                 batch_out = batch_idx.unsqueeze(1).expand(size, n)
@@ -137,7 +148,16 @@ def legal_action_kl_probe(decoder, obs_rep, obs, actions,
                      source_out[successor_valid],
                      successor_ids[successor_valid]),
                     kl[successor_valid], accumulate=True)
+                if return_tv:
+                    tv_totals.index_put_(
+                        (batch_out[successor_valid],
+                         source_out[successor_valid],
+                         successor_ids[successor_valid]),
+                        tv[successor_valid], accumulate=True)
             scores[:, :-1] = totals[:, :-1] / counts.unsqueeze(-1).clamp_min(1)
+            if return_tv:
+                tv_scores[:, :-1] = (tv_totals[:, :-1] /
+                                    counts.unsqueeze(-1).clamp_min(1))
 
     if agent_order is not None:
         inverse = order.argsort(1)
@@ -145,6 +165,10 @@ def legal_action_kl_probe(decoder, obs_rep, obs, actions,
         gather_dst = inverse.unsqueeze(1).expand(b, n, n)
         scores = scores.gather(1, gather_src).gather(2, gather_dst)
         valid = valid.gather(1, gather_src).gather(2, gather_dst)
+        if return_tv:
+            tv_scores = tv_scores.gather(1, gather_src).gather(2, gather_dst)
+    if return_tv:
+        return (scores, valid, tv_scores) if return_valid else (scores, tv_scores)
     return (scores, valid) if return_valid else scores
 
 
