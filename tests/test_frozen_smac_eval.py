@@ -34,6 +34,12 @@ class TestFrozenSmacEval(unittest.TestCase):
         # Avoid actually starting StarCraft II in GitHub CPU CI.
         with self.assertRaises(FileNotFoundError):
             evaluate_frozen_checkpoint("/file/that/does/not/exist.pt")
+        with self.assertRaises(ValueError):
+            evaluate_frozen_checkpoint("/file/that/does/not/exist.pt",
+                                       agent_order_mode="unknown")
+        with self.assertRaises(FileNotFoundError):
+            evaluate_frozen_checkpoint("/file/that/does/not/exist.pt",
+                                       agent_order_mode="identity")
 
 
 if __name__ == "__main__":
