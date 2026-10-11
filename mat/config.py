@@ -322,6 +322,8 @@ def get_config():
                         help="JS residual scale for V3.1 soft influence labels")
     parser.add_argument("--order_influence_min_effect", type=float, default=1e-7,
                         help="Minimum within-stratum JS residual for nonzero confidence")
+    parser.add_argument("--cache_order_influence_teacher", action="store_true", default=False,
+                        help="Cache frozen teacher raw JS per rollout transition across PPO epochs")
     parser.add_argument("--order_loss_coef", type=float, default=0.1,
                         help="Learned-order PPO loss weight (pilot; factor-wise clipping)")
     parser.add_argument("--store_agent_orders", action="store_true", default=False,

@@ -48,16 +48,20 @@ class MATTrainer:
         self.order_influence_max_alternatives = getattr(args, "order_influence_max_alternatives", 2)
         self.order_influence_effect_scale = float(getattr(args, "order_influence_effect_scale", 1e-5))
         self.order_influence_min_effect = float(getattr(args, "order_influence_min_effect", 1e-7))
+        self.cache_order_influence_teacher = bool(getattr(args, "cache_order_influence_teacher", False))
         if self.order_influence_align_coef < 0 or not np.isfinite(self.order_influence_align_coef):
             raise ValueError("order_influence_align_coef must be finite and nonnegative")
         if self.order_influence_align_coef and getattr(args, "agent_order_mode", None) != "dependency_prefix":
             raise ValueError("influence alignment requires dependency_prefix")
+        if self.cache_order_influence_teacher and not self.order_influence_align_coef:
+            raise ValueError("teacher cache requires enabled influence alignment")
         if not isinstance(self.order_influence_max_alternatives, int) or self.order_influence_max_alternatives < 1:
             raise ValueError("order_influence_max_alternatives must be positive")
         if (not np.isfinite(self.order_influence_effect_scale) or self.order_influence_effect_scale <= 0 or
                 not np.isfinite(self.order_influence_min_effect) or self.order_influence_min_effect < 0):
             raise ValueError("invalid influence effect scale or floor")
         self._influence_teacher = None
+        self._influence_raw_cache = {}
         if self.learned_orders and self.order_loss_coef <= 0:
             raise ValueError("learned-order PPO requires positive order_loss_coef")
         
@@ -122,7 +126,10 @@ class MATTrainer:
         :return imp_weights: (torch.Tensor) importance sampling weights.
         """
         old_order_logp = None
-        if len(sample) == 14:
+        transition_indices = None
+        if len(sample) == 15 and self.cache_order_influence_teacher:
+            *standard_sample, stored_agent_orders, old_order_logp, transition_indices = sample
+        elif len(sample) == 14:
             *standard_sample, stored_agent_orders, old_order_logp = sample
         elif len(sample) == 13:
             *standard_sample, stored_agent_orders = sample
@@ -132,6 +139,8 @@ class MATTrainer:
             raise ValueError("expected 12 standard, 13 saved order or 14 learned-order fields")
         if self.learned_orders != (old_order_logp is not None):
             raise ValueError("learned PPO requires saved permutation and old log probability")
+        if self.cache_order_influence_teacher and transition_indices is None:
+            raise ValueError("teacher cache requires stable rollout transition indices")
         share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch, \
         value_preds_batch, return_batch, masks_batch, active_masks_batch, old_action_log_probs_batch, \
         adv_targ, available_actions_batch = standard_sample
@@ -239,9 +248,29 @@ class MATTrainer:
                 -1, self.num_agents, 1)
             legal = check(available_actions_batch).to(device=self.device).reshape(
                 -1, self.num_agents, self.policy.transformer.action_dim)
-            js, valid, entropy, alt_count = conditional_action_js(
-                self._influence_teacher, obs, actions, legal, order,
-                max_alternatives=self.order_influence_max_alternatives)
+            if self.cache_order_influence_teacher:
+                ids = np.asarray(transition_indices)
+                if (ids.shape != (obs.shape[0],) or not np.issubdtype(ids.dtype, np.integer)
+                        or np.unique(ids).size != ids.size or np.any(ids < 0)):
+                    raise ValueError("invalid cache transition indices")
+                misses = [row for row, idx in enumerate(ids)
+                          if int(idx) not in self._influence_raw_cache]
+                if misses:
+                    miss = torch.as_tensor(misses, dtype=torch.long, device=self.device)
+                    fresh = conditional_action_js(
+                        self._influence_teacher, obs[miss], actions[miss],
+                        legal[miss], order[miss],
+                        max_alternatives=self.order_influence_max_alternatives)
+                    for position, row in enumerate(misses):
+                        self._influence_raw_cache[int(ids[row])] = tuple(
+                            component[position].detach().clone() for component in fresh)
+                js, valid, entropy, alt_count = (
+                    torch.stack([self._influence_raw_cache[int(idx)][field] for idx in ids])
+                    for field in range(4))
+            else:
+                js, valid, entropy, alt_count = conditional_action_js(
+                    self._influence_teacher, obs, actions, legal, order,
+                    max_alternatives=self.order_influence_max_alternatives)
             from mat.algorithms.mat.algorithm.agent_ordering import reorder_agents
             targets, confidence = alignment_targets(
                 js, valid, entropy, alt_count, reorder_agents(legal, order).sum(-1),
@@ -286,6 +315,7 @@ class MATTrainer:
         # Each PPO update sees one pre-update frozen teacher snapshot. Never
         # construct a teacher from evaluation episodes or refresh per epoch.
         self._influence_teacher = None
+        self._influence_raw_cache = {}
         advantages_copy = buffer.advantages.copy()
         advantages_copy[buffer.active_masks[:-1] == 0.0] = np.nan
         mean_advantages = np.nanmean(advantages_copy)
@@ -318,7 +348,12 @@ class MATTrainer:
             train_info['order_attention_scale_grad'] = 0
 
         for _ in range(self.ppo_epoch):
-            data_generator = buffer.feed_forward_generator_transformer(advantages, self.num_mini_batch)
+            if self.cache_order_influence_teacher:
+                data_generator = buffer.feed_forward_generator_transformer(
+                    advantages, self.num_mini_batch, include_transition_indices=True)
+            else:
+                data_generator = buffer.feed_forward_generator_transformer(
+                    advantages, self.num_mini_batch)
 
             for sample in data_generator:
 
@@ -352,6 +387,7 @@ class MATTrainer:
         for k in train_info.keys():
             train_info[k] /= num_updates
         self._influence_teacher = None
+        self._influence_raw_cache = {}
  
         return train_info
 

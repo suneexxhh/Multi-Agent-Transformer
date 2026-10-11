@@ -77,6 +77,18 @@ class TestPrefixDependencyLauncher(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("requires STORE_AGENT_ORDERS=1", result.stderr)
 
+    def test_teacher_cache_is_opt_in_and_requires_alignment(self):
+        ordinary = dry(ORDER_INFLUENCE_ALIGN_COEF="0.2")
+        self.assertEqual(ordinary.returncode, 0, ordinary.stderr)
+        self.assertNotIn("--cache_order_influence_teacher", ordinary.stdout)
+        cached = dry(ORDER_INFLUENCE_ALIGN_COEF="0.2",
+                     CACHE_ORDER_INFLUENCE_TEACHER="1")
+        self.assertEqual(cached.returncode, 0, cached.stderr)
+        self.assertIn("--cache_order_influence_teacher", cached.stdout)
+        invalid = dry(CACHE_ORDER_INFLUENCE_TEACHER="1")
+        self.assertNotEqual(invalid.returncode, 0)
+        self.assertIn("teacher cache requires", invalid.stderr)
+
     def test_approved_superhard_and_external_root(self):
         result = dry("6h_vs_8z",
                      MAT_DECODER_RESULTS_ROOT="/data/sandboxed-v3-results",
