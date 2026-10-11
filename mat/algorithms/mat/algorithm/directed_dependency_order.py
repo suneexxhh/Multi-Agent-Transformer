@@ -69,6 +69,31 @@ class DirectedDependencyOrder(LearnedAgentOrder):
             raise ValueError("non-finite precedence scores")
         return logits
 
+    def conditioning_bias(self, obs, order):
+        """Log-soft gate [B,target_slot,shifted_action_key_slot] for MAT.
+
+        At decoder target slot k, key 0 is BOS; key l>=1 contains the
+        action produced at slot l-1. Gate that key with the directed
+        precedence preference p(source=order[l-1] BEFORE target=order[k]).
+        Future action slots remain blocked by MAT's causal attention mask.
+        This is a *soft attention bias*, not an independence/DAG mask.
+        The bias is recomputed differentiably using the PPO-stored order.
+        """
+        from mat.algorithms.mat.algorithm.agent_ordering import validate_agent_order
+        if obs.ndim != 3:
+            raise ValueError("obs must be [B,N,D]")
+        order = validate_agent_order(order, obs.shape[0], obs.shape[1], obs.device)
+        logits = self.pairwise_logits(obs)
+        ordered = logits.gather(1, order.unsqueeze(-1).expand_as(logits))
+        ordered = ordered.gather(2, order.unsqueeze(1).expand_as(ordered))
+        batch, agents, _ = ordered.shape
+        # Source slot j is stored as shifted-action key (j+1).
+        # log(2*p) is zero when p=0.5 and thus neutral at initialization.
+        pair_bias = math.log(2.) + F.logsigmoid(
+            ordered[:, :-1, :].transpose(1, 2))
+        bos = ordered.new_zeros(batch, agents, 1)
+        return torch.cat((bos, pair_bias), dim=-1)
+
     @torch.no_grad()
     def candidate_dag(self, obs, threshold=0.7, order=None):
         """Return (acyclic candidate edges [B,N,N], exact PL ordering).
