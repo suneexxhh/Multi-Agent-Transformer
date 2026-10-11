@@ -15,6 +15,7 @@ from mat.algorithms.utils.transformer_act import (
 )
 from mat.algorithms.mat.algorithm.agent_ordering import compute_agent_order, validate_agent_order
 from mat.algorithms.mat.algorithm.learned_agent_order import LearnedAgentOrder
+from mat.algorithms.mat.algorithm.directed_dependency_order import DirectedDependencyOrder
 
 def init_(m, gain=0.01, activate=False):
     if activate:
@@ -233,7 +234,8 @@ class MultiAgentTransformer(nn.Module):
                  n_block, n_embd, n_head, encode_state=False, device=torch.device("cpu"),
                  action_type='Discrete', dec_actor=False, share_actor=False,
                  agent_order_mode='identity', agent_order_seed=1,
-                 order_hidden_dim=64, order_temperature=1.0):
+                 order_hidden_dim=64, order_temperature=1.0,
+                 order_pair_rank=16, order_graph_scale=0.5):
         super(MultiAgentTransformer, self).__init__()
 
         self.n_agent = n_agent
@@ -243,8 +245,15 @@ class MultiAgentTransformer(nn.Module):
         self.device = device
         self.agent_order_mode = agent_order_mode
         self.agent_order_seed = agent_order_seed
-        self.order_policy = (LearnedAgentOrder(obs_dim, order_hidden_dim, order_temperature)
-                             if agent_order_mode == 'learned' else None)
+        if agent_order_mode == 'learned':
+            self.order_policy = LearnedAgentOrder(
+                obs_dim, order_hidden_dim, order_temperature)
+        elif agent_order_mode == 'dependency':
+            self.order_policy = DirectedDependencyOrder(
+                obs_dim, order_hidden_dim, order_temperature,
+                pair_rank=order_pair_rank, graph_scale=order_graph_scale)
+        else:
+            self.order_policy = None
         if dec_actor and agent_order_mode != 'identity':
             raise ValueError("V0 agent ordering only supports Transformer Decoder (mat), not dec_actor.")
 
