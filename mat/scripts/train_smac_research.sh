@@ -20,6 +20,7 @@ ORDER_TEMPERATURE="${ORDER_TEMPERATURE:-1.0}"
 ORDER_LOSS_COEF="${ORDER_LOSS_COEF:-0.1}"
 ORDER_PAIR_RANK="${ORDER_PAIR_RANK:-16}"
 ORDER_GRAPH_SCALE="${ORDER_GRAPH_SCALE:-0.5}"
+ORDER_PREFIX_SCALE="${ORDER_PREFIX_SCALE:-1.0}"
 SAVE_INTERVAL_UPDATES="${SAVE_INTERVAL_UPDATES:-100000}"
 EVAL_INTERVAL_UPDATES="${EVAL_INTERVAL_UPDATES:-25}"
 DISABLE_ORDER_ATTENTION_BIAS="${DISABLE_ORDER_ATTENTION_BIAS:-0}"
@@ -61,10 +62,10 @@ if [[ "$DECODER_DIAG_CAPTURE" == "1" && ! "$DECODER_DIAG_CAPTURE_EPISODES" =~ ^[
   exit 2
 fi
 case "$AGENT_ORDER_MODE" in
-  identity|random_fixed|obs_norm|learned|dependency) ;;
+  identity|random_fixed|obs_norm|learned|dependency|dependency_prefix) ;;
   *) echo "Unknown AGENT_ORDER_MODE: $AGENT_ORDER_MODE" >&2; exit 2 ;;
 esac
-if [[ "$AGENT_ORDER_MODE" == "learned" || "$AGENT_ORDER_MODE" == "dependency" ]]; then
+if [[ "$AGENT_ORDER_MODE" == "learned" || "$AGENT_ORDER_MODE" == "dependency" || "$AGENT_ORDER_MODE" == "dependency_prefix" ]]; then
   if [[ "$STORE_AGENT_ORDERS" != "1" ]]; then
     echo "learned ordering requires STORE_AGENT_ORDERS=1 for PPO replay" >&2
     exit 2
@@ -186,11 +187,14 @@ fi
 if [[ -n "$RESULTS_ROOT" ]]; then
   args+=(--run_dir "$RESULTS_ROOT")
 fi
-if [[ "$AGENT_ORDER_MODE" == "learned" || "$AGENT_ORDER_MODE" == "dependency" ]]; then
+if [[ "$AGENT_ORDER_MODE" == "learned" || "$AGENT_ORDER_MODE" == "dependency" || "$AGENT_ORDER_MODE" == "dependency_prefix" ]]; then
   args+=(--order_hidden_dim "$ORDER_HIDDEN_DIM")
   args+=(--order_temperature "$ORDER_TEMPERATURE")
   args+=(--order_loss_coef "$ORDER_LOSS_COEF")
-  if [[ "$AGENT_ORDER_MODE" == "dependency" ]]; then
+  if [[ "$AGENT_ORDER_MODE" == "dependency" || "$AGENT_ORDER_MODE" == "dependency_prefix" ]]; then
+    if [[ "$AGENT_ORDER_MODE" == "dependency_prefix" ]]; then
+      args+=(--order_prefix_scale "$ORDER_PREFIX_SCALE")
+    fi
     args+=(--order_pair_rank "$ORDER_PAIR_RANK")
     args+=(--order_graph_scale "$ORDER_GRAPH_SCALE")
     if [[ "$DISABLE_ORDER_ATTENTION_BIAS" == "1" ]]; then

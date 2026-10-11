@@ -16,6 +16,7 @@ from mat.algorithms.utils.transformer_act import (
 from mat.algorithms.mat.algorithm.agent_ordering import compute_agent_order, validate_agent_order
 from mat.algorithms.mat.algorithm.learned_agent_order import LearnedAgentOrder
 from mat.algorithms.mat.algorithm.directed_dependency_order import DirectedDependencyOrder
+from mat.algorithms.mat.algorithm.prefix_dependency_order import PrefixDependencyOrder
 
 def init_(m, gain=0.01, activate=False):
     if activate:
@@ -245,7 +246,7 @@ class MultiAgentTransformer(nn.Module):
                  agent_order_mode='identity', agent_order_seed=1,
                  order_hidden_dim=64, order_temperature=1.0,
                  order_pair_rank=16, order_graph_scale=0.5,
-                 order_attention_bias=True):
+                 order_attention_bias=True, order_prefix_scale=1.0):
         super(MultiAgentTransformer, self).__init__()
 
         self.n_agent = n_agent
@@ -275,6 +276,11 @@ class MultiAgentTransformer(nn.Module):
                 self.order_policy = DirectedDependencyOrder(
                     obs_dim, order_hidden_dim, order_temperature,
                     pair_rank=order_pair_rank, graph_scale=order_graph_scale)
+            elif agent_order_mode == 'dependency_prefix':
+                self.order_policy = PrefixDependencyOrder(
+                    obs_dim, order_hidden_dim, order_temperature,
+                    pair_rank=order_pair_rank, graph_scale=order_graph_scale,
+                    prefix_scale=order_prefix_scale)
             else:
                 self.order_policy = None
         self.to(device)

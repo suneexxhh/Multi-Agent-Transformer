@@ -48,7 +48,7 @@ def evaluate_frozen_checkpoint(checkpoint, map_name="3m", seed=1,
         raise ValueError("unrecognized MAT agent ordering mode")
     # Learned actors and the dependency attention ablation require the
     # *training* architecture from a manifest, not guessed defaults.
-    if manifest_path is None and agent_order_mode in ("learned", "dependency"):
+    if manifest_path is None and agent_order_mode in ("learned", "dependency", "dependency_prefix"):
         raise ValueError("learned/dependency frozen evaluation requires --manifest")
     manifest = (load_training_manifest(manifest_path, map_name, agent_order_mode)
                 if manifest_path is not None else None)
@@ -79,7 +79,7 @@ def evaluate_frozen_checkpoint(checkpoint, map_name="3m", seed=1,
     args.use_eval = True
     args.use_wandb = False
     args.model_dir = None
-    args.store_agent_orders = (agent_order_mode in ("learned", "dependency") or
+    args.store_agent_orders = (agent_order_mode in ("learned", "dependency", "dependency_prefix") or
                                bool(manifest is not None and
                                     manifest["config"]["store_agent_orders"]))
     # Eval scenario seed follows MAT make_eval_env and is identical
