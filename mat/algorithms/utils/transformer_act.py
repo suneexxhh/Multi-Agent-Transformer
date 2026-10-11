@@ -4,7 +4,7 @@ from torch.nn import functional as F
 
 
 def discrete_autoregreesive_act(decoder, obs_rep, obs, batch_size, n_agent, action_dim, tpdv,
-                                available_actions=None, deterministic=False):
+                                available_actions=None, deterministic=False, attention_bias=None):
     shifted_action = torch.zeros((batch_size, n_agent, action_dim + 1)).to(**tpdv)
     shifted_action[:, 0, 0] = 1
     # Sampling outputs must stay on the model device. Original MAT created these
@@ -14,7 +14,7 @@ def discrete_autoregreesive_act(decoder, obs_rep, obs, batch_size, n_agent, acti
     output_action_log = torch.zeros_like(output_action, dtype=shifted_action.dtype)
 
     for i in range(n_agent):
-        logit = decoder(shifted_action, obs_rep, obs)[:, i, :]
+        logit = decoder(shifted_action, obs_rep, obs, attention_bias=attention_bias)[:, i, :]
         if available_actions is not None:
             logit[available_actions[:, i, :] == 0] = -1e10
 
@@ -30,12 +30,12 @@ def discrete_autoregreesive_act(decoder, obs_rep, obs, batch_size, n_agent, acti
 
 
 def discrete_parallel_act(decoder, obs_rep, obs, action, batch_size, n_agent, action_dim, tpdv,
-                          available_actions=None):
+                          available_actions=None, attention_bias=None):
     one_hot_action = F.one_hot(action.squeeze(-1), num_classes=action_dim)  # (batch, n_agent, action_dim)
     shifted_action = torch.zeros((batch_size, n_agent, action_dim + 1)).to(**tpdv)
     shifted_action[:, 0, 0] = 1
     shifted_action[:, 1:, 1:] = one_hot_action[:, :-1, :]
-    logit = decoder(shifted_action, obs_rep, obs)
+    logit = decoder(shifted_action, obs_rep, obs, attention_bias=attention_bias)
     if available_actions is not None:
         logit[available_actions == 0] = -1e10
 
@@ -46,7 +46,7 @@ def discrete_parallel_act(decoder, obs_rep, obs, action, batch_size, n_agent, ac
 
 
 def continuous_autoregreesive_act(decoder, obs_rep, obs, batch_size, n_agent, action_dim, tpdv,
-                                  deterministic=False):
+                                  deterministic=False, attention_bias=None):
     shifted_action = torch.zeros((batch_size, n_agent, action_dim)).to(**tpdv)
     # Keep continuous sampling outputs on the same device as decoder inputs.
     output_action = torch.zeros((batch_size, n_agent, action_dim),
@@ -54,7 +54,7 @@ def continuous_autoregreesive_act(decoder, obs_rep, obs, batch_size, n_agent, ac
     output_action_log = torch.zeros_like(output_action)
 
     for i in range(n_agent):
-        act_mean = decoder(shifted_action, obs_rep, obs)[:, i, :]
+        act_mean = decoder(shifted_action, obs_rep, obs, attention_bias=attention_bias)[:, i, :]
         action_std = torch.sigmoid(decoder.log_std) * 0.5
 
         # log_std = torch.zeros_like(act_mean).to(**tpdv) + decoder.log_std
@@ -74,11 +74,12 @@ def continuous_autoregreesive_act(decoder, obs_rep, obs, batch_size, n_agent, ac
     return output_action, output_action_log
 
 
-def continuous_parallel_act(decoder, obs_rep, obs, action, batch_size, n_agent, action_dim, tpdv):
+def continuous_parallel_act(decoder, obs_rep, obs, action, batch_size, n_agent, action_dim, tpdv,
+                            attention_bias=None):
     shifted_action = torch.zeros((batch_size, n_agent, action_dim)).to(**tpdv)
     shifted_action[:, 1:, :] = action[:, :-1, :]
 
-    act_mean = decoder(shifted_action, obs_rep, obs)
+    act_mean = decoder(shifted_action, obs_rep, obs, attention_bias=attention_bias)
     action_std = torch.sigmoid(decoder.log_std) * 0.5
     distri = Normal(act_mean, action_std)
 
@@ -97,44 +98,46 @@ from mat.algorithms.mat.algorithm.agent_ordering import reorder_agents, restore_
 
 def discrete_autoregreesive_ordered_act(decoder, obs_rep, obs, batch_size, n_agent,
                                        action_dim, tpdv, agent_order, available_actions=None,
-                                       deterministic=False):
+                                       deterministic=False, attention_bias=None):
     ordered_rep = reorder_agents(obs_rep, agent_order)
     ordered_obs = reorder_agents(obs, agent_order)
     ordered_available = reorder_agents(available_actions, agent_order)
     action, log_prob = discrete_autoregreesive_act(
         decoder, ordered_rep, ordered_obs, batch_size, n_agent, action_dim,
-        tpdv, ordered_available, deterministic
+        tpdv, ordered_available, deterministic, attention_bias
     )
     return restore_agents(action, agent_order), restore_agents(log_prob, agent_order)
 
 
 def discrete_parallel_ordered_act(decoder, obs_rep, obs, action, batch_size,
                                   n_agent, action_dim, tpdv, agent_order,
-                                  available_actions=None):
+                                  available_actions=None, attention_bias=None):
     log_prob, entropy = discrete_parallel_act(
         decoder, reorder_agents(obs_rep, agent_order),
         reorder_agents(obs, agent_order), reorder_agents(action, agent_order),
         batch_size, n_agent, action_dim, tpdv,
-        reorder_agents(available_actions, agent_order)
+        reorder_agents(available_actions, agent_order), attention_bias
     )
     return restore_agents(log_prob, agent_order), restore_agents(entropy, agent_order)
 
 
 def continuous_autoregreesive_ordered_act(decoder, obs_rep, obs, batch_size, n_agent,
-                                         action_dim, tpdv, agent_order, deterministic=False):
+                                         action_dim, tpdv, agent_order, deterministic=False,
+                                         attention_bias=None):
     action, log_prob = continuous_autoregreesive_act(
         decoder, reorder_agents(obs_rep, agent_order),
         reorder_agents(obs, agent_order), batch_size, n_agent, action_dim,
-        tpdv, deterministic
+        tpdv, deterministic, attention_bias
     )
     return restore_agents(action, agent_order), restore_agents(log_prob, agent_order)
 
 
 def continuous_parallel_ordered_act(decoder, obs_rep, obs, action, batch_size,
-                                    n_agent, action_dim, tpdv, agent_order):
+                                    n_agent, action_dim, tpdv, agent_order,
+                                    attention_bias=None):
     log_prob, entropy = continuous_parallel_act(
         decoder, reorder_agents(obs_rep, agent_order),
         reorder_agents(obs, agent_order), reorder_agents(action, agent_order),
-        batch_size, n_agent, action_dim, tpdv
+        batch_size, n_agent, action_dim, tpdv, attention_bias
     )
     return restore_agents(log_prob, agent_order), restore_agents(entropy, agent_order)
