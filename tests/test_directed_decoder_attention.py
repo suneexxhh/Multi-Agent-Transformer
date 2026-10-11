@@ -35,7 +35,7 @@ class TestDirectedDecoderAttention(unittest.TestCase):
     def test_bias_changes_logits_and_backpropagates_through_precedence(self):
         shifted=torch.zeros(2,4,5)
         shifted[:,0,0]=1
-        shifted[:,1,1:]=F.one_hot(torch.tensor([[2,1,3],[1,2,3]]),4).float()
+        shifted[:,1:,1:]=F.one_hot(torch.tensor([[2,1,3],[1,2,3]]),4).float()
         bias=self.net.order_policy.conditioning_bias(self.obs, self.order)
         without=self.net.decoder(shifted,self.rep,self.obs)
         with_rel=self.net.decoder(shifted,self.rep,self.obs,attention_bias=bias)
