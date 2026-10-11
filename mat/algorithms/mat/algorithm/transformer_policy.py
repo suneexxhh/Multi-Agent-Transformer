@@ -60,7 +60,7 @@ class TransformerPolicy:
         # Only the original MAT architecture supports this V0 decoder experiment.
         order_mode = getattr(args, "agent_order_mode", "identity")
         order_seed = getattr(args, "agent_order_seed", 1)
-        if order_mode == "learned" and (args.env_name != "StarCraft2" or
+        if order_mode in ("learned", "dependency") and (args.env_name != "StarCraft2" or
                                         not getattr(args, "store_agent_orders", False)):
             raise ValueError("learned ordering requires SMAC and --store_agent_orders")
         if order_mode != "identity" and self.algorithm_name != "mat":
@@ -69,7 +69,9 @@ class TransformerPolicy:
         if self.algorithm_name in ["mat", "mat_dec"]:
             extra_kwargs = dict(agent_order_mode=order_mode, agent_order_seed=order_seed,
                                 order_hidden_dim=getattr(args, "order_hidden_dim", 64),
-                                order_temperature=getattr(args, "order_temperature", 1.0))
+                                order_temperature=getattr(args, "order_temperature", 1.0),
+                                order_pair_rank=getattr(args, "order_pair_rank", 16),
+                                order_graph_scale=getattr(args, "order_graph_scale", 0.5))
         self.transformer = MAT(self.share_obs_dim, self.obs_dim, self.act_dim, num_agents,
                                n_block=args.n_block, n_embd=args.n_embd, n_head=args.n_head,
                                encode_state=args.encode_state, device=device,
