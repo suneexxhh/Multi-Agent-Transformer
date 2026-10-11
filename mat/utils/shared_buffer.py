@@ -44,7 +44,7 @@ class SharedReplayBuffer(object):
         self.num_agents = num_agents
         self.env_name = env_name
         self.store_agent_orders = getattr(args, "store_agent_orders", False)
-        self.learned_orders = getattr(args, "agent_order_mode", "identity") == "learned"
+        self.learned_orders = getattr(args, "agent_order_mode", "identity") in ("learned", "dependency")
         if self.learned_orders and not self.store_agent_orders:
             raise ValueError("learned ordering requires --store_agent_orders")
         if self.store_agent_orders and (env_name != "StarCraft2" or self.algo != "mat"):
