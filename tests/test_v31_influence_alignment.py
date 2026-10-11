@@ -293,12 +293,22 @@ class TestV31Model(unittest.TestCase):
             legacy = dict(manifest)
             legacy["schema_version"] = 1
             legacy["config"] = {k: v for k, v in manifest["config"].items()
-                                if k not in ("adaptive_order_attention_bias", "order_attention_scale_max",
+                                if k not in ("order_prefix_scale", "cache_order_influence_teacher",
+                                             "adaptive_order_attention_bias", "order_attention_scale_max",
                                              "order_influence_align_coef", "order_influence_max_alternatives",
                                              "order_influence_effect_scale", "order_influence_min_effect")}
             path.write_text(json.dumps(legacy))
+            migrated = load_training_manifest(path, "3s5z", "dependency_prefix")["config"]
+            self.assertFalse(migrated["adaptive_order_attention_bias"])
+            self.assertFalse(migrated["cache_order_influence_teacher"])
+            self.assertEqual(migrated["order_prefix_scale"], 1.0)
+            v31_legacy = dict(manifest)
+            v31_legacy["schema_version"] = 2
+            v31_legacy["config"] = {k: v for k, v in manifest["config"].items()
+                                    if k != "cache_order_influence_teacher"}
+            path.write_text(json.dumps(v31_legacy))
             self.assertFalse(load_training_manifest(path, "3s5z", "dependency_prefix")
-                             ["config"]["adaptive_order_attention_bias"])
+                             ["config"]["cache_order_influence_teacher"])
 
     def test_actual_ppo_auxiliary_path_uses_frozen_snapshot(self):
         model = self.model(adaptive=True)

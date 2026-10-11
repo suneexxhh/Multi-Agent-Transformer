@@ -248,7 +248,9 @@ class SharedReplayBuffer(object):
                 self.advantages[step] = gae
                 self.returns[step] = gae + self.value_preds[step]
 
-    def feed_forward_generator_transformer(self, advantages, num_mini_batch=None, mini_batch_size=None):
+    def feed_forward_generator_transformer(self, advantages, num_mini_batch=None,
+                                           mini_batch_size=None,
+                                           include_transition_indices=False):
         """
         Yield training data for MLP policies.
         :param advantages: (np.ndarray) advantage estimates.
@@ -333,4 +335,8 @@ class SharedReplayBuffer(object):
                 sample = sample + (agent_orders[indices].copy(),)
                 if old_order_logps is not None:
                     sample = sample + (old_order_logps[indices].copy(),)
+            if include_transition_indices:
+                # Stable within this rollout buffer across reshuffled PPO
+                # epochs. The caller must clear its cache at every update.
+                sample = sample + (indices.copy(),)
             yield sample

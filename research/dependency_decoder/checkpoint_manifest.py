@@ -9,14 +9,16 @@ from pathlib import Path
 import re
 import math
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 LEGACY_MODEL_DEFAULTS = {
+    "order_prefix_scale": 1.0,
     "adaptive_order_attention_bias": False,
     "order_attention_scale_max": 2.0,
     "order_influence_align_coef": 0.0,
     "order_influence_max_alternatives": 2,
     "order_influence_effect_scale": 1e-5,
     "order_influence_min_effect": 1e-7,
+    "cache_order_influence_teacher": False,
 }
 MODEL_FIELDS = (
     "env_name", "map_name", "algorithm_name", "agent_order_mode",
@@ -27,6 +29,7 @@ MODEL_FIELDS = (
     "adaptive_order_attention_bias", "order_attention_scale_max",
     "order_influence_align_coef", "order_influence_max_alternatives",
     "order_influence_effect_scale", "order_influence_min_effect",
+    "cache_order_influence_teacher",
 )
 PROTOCOL_FIELDS = (
     "seed", "n_rollout_threads", "n_eval_rollout_threads",
@@ -55,6 +58,8 @@ def build_training_manifest(all_args, source_sha, source_dirty=False):
         raise ValueError("invalid V3.1 model hyperparameters")
     if cfg["order_influence_align_coef"] and cfg["agent_order_mode"] != "dependency_prefix":
         raise ValueError("influence alignment requires dependency_prefix")
+    if cfg["cache_order_influence_teacher"] and not cfg["order_influence_align_coef"]:
+        raise ValueError("teacher cache requires influence alignment")
     return dict(schema_version=SCHEMA_VERSION,
                 training_source_sha=source_sha, source_dirty=bool(source_dirty),
                 checkpoint_format="transformer_state_dict_only",
@@ -66,15 +71,20 @@ def load_training_manifest(path, map_name, mode):
     if mode not in ORDER_MODES:
         raise ValueError("unknown MAT decoding mode")
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(raw, dict) or raw.get("schema_version") not in (1, SCHEMA_VERSION):
+    if not isinstance(raw, dict) or raw.get("schema_version") not in (1, 2, SCHEMA_VERSION):
         raise ValueError("unsupported training manifest schema")
     cfg = raw.get("config")
     expected = (tuple(k for k in MODEL_FIELDS if k not in LEGACY_MODEL_DEFAULTS)
-                if raw["schema_version"] == 1 else MODEL_FIELDS)
+                if raw["schema_version"] == 1 else
+                tuple(k for k in MODEL_FIELDS if k != "cache_order_influence_teacher")
+                if raw["schema_version"] == 2 else MODEL_FIELDS)
     if not isinstance(cfg, dict) or any(k not in cfg for k in (*expected, *PROTOCOL_FIELDS)):
         raise ValueError("incomplete training manifest")
     if raw["schema_version"] == 1:
         cfg = {**LEGACY_MODEL_DEFAULTS, **cfg}
+        raw = {**raw, "config": cfg}
+    elif raw["schema_version"] == 2:
+        cfg = {"cache_order_influence_teacher": False, **cfg}
         raw = {**raw, "config": cfg}
     if raw.get("checkpoint_format") != "transformer_state_dict_only":
         raise ValueError("unsupported frozen checkpoint format")
@@ -106,6 +116,8 @@ def load_training_manifest(path, map_name, mode):
         raise ValueError("invalid V3.1 checkpoint hyperparameters")
     if cfg["order_influence_align_coef"] and mode != "dependency_prefix":
         raise ValueError("invalid influence alignment manifest")
+    if cfg["cache_order_influence_teacher"] and not cfg["order_influence_align_coef"]:
+        raise ValueError("invalid teacher cache manifest")
     return raw
 
 
@@ -120,7 +132,8 @@ def evaluation_model_flags(manifest):
               "order_influence_effect_scale", "order_influence_min_effect"):
         flags += ["--" + k, str(cfg[k])]
     for name in ("encode_state", "share_actor", "store_agent_orders",
-                 "disable_order_attention_bias", "adaptive_order_attention_bias"):
+                 "disable_order_attention_bias", "adaptive_order_attention_bias",
+                 "cache_order_influence_teacher"):
         if cfg[name]:
             flags.append("--" + name)
     if cfg["dec_actor"]:
