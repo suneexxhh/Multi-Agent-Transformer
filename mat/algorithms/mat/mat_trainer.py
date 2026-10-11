@@ -42,7 +42,7 @@ class MATTrainer:
         self._use_value_active_masks = args.use_value_active_masks
         self._use_policy_active_masks = args.use_policy_active_masks
         self.dec_actor = args.dec_actor
-        self.learned_orders = getattr(args, "agent_order_mode", "identity") in ("learned", "dependency")
+        self.learned_orders = getattr(args, "agent_order_mode", "identity") in ("learned", "dependency", "dependency_prefix")
         self.order_loss_coef = getattr(args, "order_loss_coef", 0.1)
         if self.learned_orders and self.order_loss_coef <= 0:
             raise ValueError("learned-order PPO requires positive order_loss_coef")
