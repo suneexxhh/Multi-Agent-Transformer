@@ -13,8 +13,7 @@ MODEL_FIELDS = (
     "env_name", "map_name", "algorithm_name", "agent_order_mode",
     "n_block", "n_embd", "n_head", "order_hidden_dim",
     "order_temperature", "order_pair_rank", "order_graph_scale",
-    "order_prefix_scale",
-    "disable_order_attention_bias", "encode_state", "dec_actor",
+    "order_prefix_scale", "disable_order_attention_bias", "encode_state", "dec_actor",
     "share_actor", "store_agent_orders", "agent_order_seed",
 )
 PROTOCOL_FIELDS = (
@@ -74,8 +73,7 @@ def evaluation_model_flags(manifest):
     flags = []
     for k in ("n_block", "n_embd", "n_head", "order_hidden_dim",
               "order_temperature", "order_pair_rank", "order_graph_scale",
-    "order_prefix_scale",
-              "agent_order_seed"):
+              "order_prefix_scale", "agent_order_seed"):
         flags += ["--" + k, str(cfg[k])]
     for name in ("encode_state", "share_actor", "store_agent_orders",
                  "disable_order_attention_bias"):
