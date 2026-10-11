@@ -42,7 +42,7 @@ class MATTrainer:
         self._use_value_active_masks = args.use_value_active_masks
         self._use_policy_active_masks = args.use_policy_active_masks
         self.dec_actor = args.dec_actor
-        self.learned_orders = getattr(args, "agent_order_mode", "identity") == "learned"
+        self.learned_orders = getattr(args, "agent_order_mode", "identity") in ("learned", "dependency")
         self.order_loss_coef = getattr(args, "order_loss_coef", 0.1)
         if self.learned_orders and self.order_loss_coef <= 0:
             raise ValueError("learned-order PPO requires positive order_loss_coef")
@@ -167,7 +167,12 @@ class MATTrainer:
             alive = active_masks_batch.reshape(B, self.num_agents, -1).mean(-1)
             team_adv = (adv * alive).sum(-1, keepdim=True) / alive.sum(
                 -1, keepdim=True).clamp_min(1.0)
-            ratio = torch.exp(new_order_logp - old_order_logp)
+            log_ratio = new_order_logp - old_order_logp
+            # Guard the permutation likelihood ratio against float32 overflow.
+            # A clamp is only hit by pathological PPO drift; its rate is logged.
+            self.last_order_log_ratio_clamp_fraction = (
+                log_ratio.detach().abs() > 20.).float().mean().item()
+            ratio = torch.exp(log_ratio.clamp(min=-20., max=20.))
             surrogate_1 = ratio * team_adv
             surrogate_2 = torch.clamp(ratio, 1. - self.clip_param,
                                      1. + self.clip_param) * team_adv
@@ -214,6 +219,7 @@ class MATTrainer:
         train_info['ratio'] = 0
         if self.learned_orders:
             train_info['order_policy_loss'] = 0
+            train_info['order_log_ratio_clamp_fraction'] = 0
 
         for _ in range(self.ppo_epoch):
             data_generator = buffer.feed_forward_generator_transformer(advantages, self.num_mini_batch)
@@ -231,6 +237,8 @@ class MATTrainer:
                 train_info['ratio'] += imp_weights.mean()
                 if self.learned_orders:
                     train_info['order_policy_loss'] += self.last_order_policy_loss
+                    train_info['order_log_ratio_clamp_fraction'] += (
+                        self.last_order_log_ratio_clamp_fraction)
 
         num_updates = self.ppo_epoch * self.num_mini_batch
 
