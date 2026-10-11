@@ -367,8 +367,12 @@ class MultiAgentTransformer(nn.Module):
             agent_order, _ = self.order_policy.sample(obs, deterministic=deterministic)
         elif self.agent_order_mode != 'identity':
             agent_order = compute_agent_order(obs, self.agent_order_mode, self.agent_order_seed)
+        # Rollout and PPO teacher-forcing MUST use the same attention mechanism.
+        # In particular, dependency-NoBias keeps directed ordering while
+        # disabling the relation bias for both action sampling and replay.
         attention_bias = (self.order_policy.conditioning_bias(obs, agent_order)
-                          if isinstance(self.order_policy, DirectedDependencyOrder) else None)
+                          if isinstance(self.order_policy, DirectedDependencyOrder)
+                          and self.order_attention_bias else None)
         if self.action_type == "Discrete":
             if agent_order is None:
                 output_action, output_action_log = discrete_autoregreesive_act(
