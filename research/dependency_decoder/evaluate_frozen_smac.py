@@ -8,6 +8,11 @@ import argparse
 from contextlib import redirect_stdout
 import io
 import json
+import hashlib
+
+from research.dependency_decoder.checkpoint_manifest import (
+    ORDER_MODES, load_training_manifest, evaluation_model_flags,
+)
 from pathlib import Path
 import re
 import tempfile
@@ -27,7 +32,7 @@ def parse_native_eval_win_rate(output, episodes):
 
 def evaluate_frozen_checkpoint(checkpoint, map_name="3m", seed=1,
                                n_eval_episodes=32, gpu=True,
-                               agent_order_mode="obs_norm"):
+                               agent_order_mode="obs_norm", manifest_path=None):
     """Run one bounded, native deterministic SMAC evaluation; no training."""
     # Reject invalid calls before importing StarCraftII or constructing
     # any process. This also makes CPU CI independent of PySC2 runtime.
@@ -35,10 +40,18 @@ def evaluate_frozen_checkpoint(checkpoint, map_name="3m", seed=1,
         raise ValueError("eval episodes must be integer 1..256")
     if not isinstance(seed, int) or not 0 <= seed < 2**31:
         raise ValueError("invalid evaluation seed")
-    if map_name not in ("3m", "3s5z", "3s5z_vs_3s6z", "6h_vs_8z"):
+    if map_name not in ("3m", "1c3s5z", "3s5z", "5m_vs_6m",
+                        "8m_vs_9m", "10m_vs_11m", "6h_vs_8z",
+                        "3s5z_vs_3s6z", "MMM2", "27m_vs_30m"):
         raise ValueError("frozen research evaluator allows only reviewed SMAC benchmark maps")
-    if agent_order_mode not in ("identity", "obs_norm", "random_fixed"):
+    if agent_order_mode not in ORDER_MODES:
         raise ValueError("unrecognized MAT agent ordering mode")
+    # Learned actors and the dependency attention ablation require the
+    # *training* architecture from a manifest, not guessed defaults.
+    if manifest_path is None and agent_order_mode in ("learned", "dependency"):
+        raise ValueError("learned/dependency frozen evaluation requires --manifest")
+    manifest = (load_training_manifest(manifest_path, map_name, agent_order_mode)
+                if manifest_path is not None else None)
     if not Path(checkpoint).is_file():
         raise FileNotFoundError(checkpoint)
 
@@ -49,6 +62,8 @@ def evaluate_frozen_checkpoint(checkpoint, map_name="3m", seed=1,
     from mat.envs.starcraft2.smac_maps import get_map_params
     from mat.runner.shared.smac_runner import SMACRunner
 
+    model_flags = (evaluation_model_flags(manifest) if manifest is not None
+                   else ["--n_block", "1", "--n_embd", "64", "--n_head", "1"])
     args = parse_args([
         "--env_name", "StarCraft2", "--algorithm_name", "mat",
         "--experiment_name", "offline_frozen_eval",
@@ -58,13 +73,15 @@ def evaluate_frozen_checkpoint(checkpoint, map_name="3m", seed=1,
         "--n_training_threads", "2",
         "--episode_length", "100", "--num_env_steps", "100",
         "--eval_episodes", str(n_eval_episodes),
-        "--seed", str(seed), "--n_block", "1",
-        "--n_embd", "64", "--n_head", "1", "--use_eval",
+        "--seed", str(seed), "--use_eval",
+        *model_flags,
     ], get_config())
     args.use_eval = True
     args.use_wandb = False
     args.model_dir = None
-    args.store_agent_orders = False
+    args.store_agent_orders = (agent_order_mode in ("learned", "dependency") or
+                               bool(manifest is not None and
+                                    manifest["config"]["store_agent_orders"]))
     # Eval scenario seed follows MAT make_eval_env and is identical
     # across checkpoint stages for fixed seed and map.
     torch.manual_seed(seed)
@@ -87,6 +104,10 @@ def evaluate_frozen_checkpoint(checkpoint, map_name="3m", seed=1,
                                  weights_only=True)
             runner.policy.transformer.load_state_dict(weights, strict=True)
             runner.policy.transformer.eval()
+            digest = hashlib.sha256()
+            with Path(checkpoint).open("rb") as weight_file:
+                for chunk in iter(lambda: weight_file.read(1024 * 1024), b""):
+                    digest.update(chunk)
             log_output = io.StringIO()
             with torch.no_grad(), redirect_stdout(log_output):
                 # Calls only the existing MAT eval() method. It does not
@@ -97,6 +118,12 @@ def evaluate_frozen_checkpoint(checkpoint, map_name="3m", seed=1,
             return dict(
                 frozen_checkpoint=str(checkpoint), map=map_name,
                 evaluation_seed=seed, algorithm=f"MAT {agent_order_mode}",
+                architecture_manifest=(str(manifest_path) if manifest else None),
+                training_source_sha=(manifest["training_source_sha"] if manifest else None),
+                checkpoint_sha256=digest.hexdigest(),
+                effective_order_attention_bias=(
+                    agent_order_mode == "dependency" and
+                    not args.disable_order_attention_bias),
                 deterministic=True, evaluation_episodes=n_eval_episodes,
                 wins=wins, win_rate=rate, device=str(device),
                 evaluation_only=True, optimizer_updates=0,
@@ -117,14 +144,16 @@ def main(argv=None):
     parser.add_argument("--map-name", default="3m")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--eval-episodes", type=int, default=32)
-    parser.add_argument("--agent-order-mode", choices=("identity","obs_norm","random_fixed"),
+    parser.add_argument("--agent-order-mode", choices=sorted(ORDER_MODES),
                         default="obs_norm")
+    parser.add_argument("--manifest", type=Path,
+                        help="Saved mat_decoder_manifest.json from the training run")
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     report = evaluate_frozen_checkpoint(
         args.checkpoint, args.map_name, args.seed,
-        args.eval_episodes, not args.cpu, args.agent_order_mode)
+        args.eval_episodes, not args.cpu, args.agent_order_mode, args.manifest)
     txt = json.dumps(report, indent=2, allow_nan=False)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
