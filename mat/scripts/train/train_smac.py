@@ -3,12 +3,15 @@ import sys
 import os
 import wandb
 import socket
+import json
+import subprocess
 import setproctitle
 import numpy as np
 from pathlib import Path
 import torch
 sys.path.append("../../")
 from mat.config import get_config
+from research.dependency_decoder.checkpoint_manifest import build_training_manifest
 from mat.envs.starcraft2.StarCraft2_Env import StarCraft2Env
 from mat.envs.starcraft2.Random_StarCraft2_Env import RandomStarCraft2Env
 from mat.envs.starcraft2.smac_maps import get_map_params
@@ -151,6 +154,19 @@ def main(args):
     # env
     num_agents = get_map_params(all_args.map_name)["n_agents"]
     all_args.run_dir = run_dir
+    # Write an immutable per-run configuration before SC2 construction so
+    # model-only checkpoints can be evaluated with the exact architecture.
+    # This is not a full training resume snapshot (no optimizer/RNG/SC2 state).
+    repo_root = Path(__file__).resolve().parents[3]
+    git_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=repo_root, text=True, timeout=10).strip()
+    tracked_changes = subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=repo_root, text=True, timeout=10).strip()
+    manifest = build_training_manifest(all_args, git_sha, bool(tracked_changes))
+    (run_dir / "mat_decoder_manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8")
     envs = make_train_env(all_args)
     eval_envs = make_eval_env(all_args) if all_args.use_eval else None
 

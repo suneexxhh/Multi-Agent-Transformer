@@ -71,7 +71,8 @@ class TransformerPolicy:
                                 order_hidden_dim=getattr(args, "order_hidden_dim", 64),
                                 order_temperature=getattr(args, "order_temperature", 1.0),
                                 order_pair_rank=getattr(args, "order_pair_rank", 16),
-                                order_graph_scale=getattr(args, "order_graph_scale", 0.5))
+                                order_graph_scale=getattr(args, "order_graph_scale", 0.5),
+                                order_attention_bias=not getattr(args, "disable_order_attention_bias", False))
         self.transformer = MAT(self.share_obs_dim, self.obs_dim, self.act_dim, num_agents,
                                n_block=args.n_block, n_embd=args.n_embd, n_head=args.n_head,
                                encode_state=args.encode_state, device=device,

@@ -138,8 +138,19 @@ class MATTrainer:
             values, action_log_probs, dist_entropy, new_order_logp = evaluation
         else:
             values, action_log_probs, dist_entropy = evaluation
+        # Fail closed on corrupt replay/new policy distributions rather than
+        # turning a failed update into poisoned optimizer parameters.
+        for name, tensor in (
+                ("old action logp", old_action_log_probs_batch),
+                ("new action logp", action_log_probs),
+                ("advantages", adv_targ),
+                ("values", values)):
+            if not torch.isfinite(tensor).all():
+                raise ValueError("non-finite PPO " + name)
         # actor update
         imp_weights = torch.exp(action_log_probs - old_action_log_probs_batch)
+        if not torch.isfinite(imp_weights).all():
+            raise ValueError("non-finite PPO action importance ratio")
 
         surr1 = imp_weights * adv_targ
         surr2 = torch.clamp(imp_weights, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv_targ
@@ -158,6 +169,9 @@ class MATTrainer:
         self.last_order_policy_loss = None
         if self.learned_orders:
             old_order_logp = check(old_order_logp).to(**self.tpdv)
+            if (not torch.isfinite(old_order_logp).all() or
+                    not torch.isfinite(new_order_logp).all()):
+                raise ValueError("non-finite learned-order PPO log probability")
             B = old_order_logp.shape[0]
             if (new_order_logp.shape != old_order_logp.shape or
                     adv_targ.shape[0] != B * self.num_agents):
@@ -173,6 +187,17 @@ class MATTrainer:
             self.last_order_log_ratio_clamp_fraction = (
                 log_ratio.detach().abs() > 20.).float().mean().item()
             ratio = torch.exp(log_ratio.clamp(min=-20., max=20.))
+            # PPO ordering diagnostics: empirical KL estimate (can be
+            # negative on small batches), current ratio clip fraction,
+            # and saved-order surprisal. None implies causal dependency.
+            self.last_order_approx_kl = (
+                -log_ratio.detach()).mean().item()
+            self.last_order_clip_fraction = (
+                (ratio.detach() - 1.0).abs() > self.clip_param
+            ).float().mean().item()
+            self.last_order_old_surprisal = (
+                -old_order_logp.detach()).mean().item()
+            self.last_order_mean_log_ratio = log_ratio.detach().mean().item()
             surrogate_1 = ratio * team_adv
             surrogate_2 = torch.clamp(ratio, 1. - self.clip_param,
                                      1. + self.clip_param) * team_adv
@@ -182,6 +207,8 @@ class MATTrainer:
             loss = loss + self.order_loss_coef * order_loss
             self.last_order_policy_loss = order_loss.detach().item()
 
+        if not torch.isfinite(loss):
+            raise ValueError("non-finite PPO total loss; optimizer not updated")
         self.policy.optimizer.zero_grad()
         loss.backward()
 
@@ -220,6 +247,10 @@ class MATTrainer:
         if self.learned_orders:
             train_info['order_policy_loss'] = 0
             train_info['order_log_ratio_clamp_fraction'] = 0
+            train_info['order_approx_kl'] = 0
+            train_info['order_clip_fraction'] = 0
+            train_info['order_old_surprisal'] = 0
+            train_info['order_mean_log_ratio'] = 0
 
         for _ in range(self.ppo_epoch):
             data_generator = buffer.feed_forward_generator_transformer(advantages, self.num_mini_batch)
@@ -239,6 +270,10 @@ class MATTrainer:
                     train_info['order_policy_loss'] += self.last_order_policy_loss
                     train_info['order_log_ratio_clamp_fraction'] += (
                         self.last_order_log_ratio_clamp_fraction)
+                    train_info['order_approx_kl'] += self.last_order_approx_kl
+                    train_info['order_clip_fraction'] += self.last_order_clip_fraction
+                    train_info['order_old_surprisal'] += self.last_order_old_surprisal
+                    train_info['order_mean_log_ratio'] += self.last_order_mean_log_ratio
 
         num_updates = self.ppo_epoch * self.num_mini_batch
 
