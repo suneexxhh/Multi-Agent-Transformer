@@ -51,10 +51,10 @@ class TestPrefixDependencyDistribution(unittest.TestCase):
         need[0, 0, 2], need[0, 1, 2] = 0.95, 0.05
         need[0, 0, 3], need[0, 1, 3] = 0.05, 0.95
         with patch.object(DirectedDependencyOrder, "scores",
-                          return_value=torch.zeros(1, 4)), \\
-             patch.object(m, "demand", return_value=need):
-            score_after_2 = m.prefix_scores(self.obs[:1], [[False, False, True, False]])
-            score_after_3 = m.prefix_scores(self.obs[:1], [[False, False, False, True]])
+                          return_value=torch.zeros(1, 4)):
+            with patch.object(m, "demand", return_value=need):
+                score_after_2 = m.prefix_scores(self.obs[:1], [[False, False, True, False]])
+                score_after_3 = m.prefix_scores(self.obs[:1], [[False, False, False, True]])
         self.assertTrue(torch.isinf(score_after_2[0, 2]))
         self.assertTrue(torch.isinf(score_after_3[0, 3]))
         odds_after_2 = score_after_2[0, 0] - score_after_2[0, 1]
