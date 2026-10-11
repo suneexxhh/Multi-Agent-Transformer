@@ -53,12 +53,37 @@ Computational overhead: pairwise matmul `O(B*N^2*r)`, activations
 `O(B*N^2)` for `N` agents, low rank `r`. For SMAC maps with many agents,
 it is cheaper than constructing `[B,N,N,3*D]` per-pair MLP inputs.
 
+## Decoder attention conditioning (new in V2)
+
+The directed matrix also guides the actual MAT Decoder cross-attention.
+For decoded target slot k and action-token key slot l>=1, the token at l
+contains the action of the agent at decoded slot l-1 (MAT's one-step
+teacher-forcing shift). Add a bounded, differentiable log-prior:
+
+```
+bias[k,0] = 0                     # BOS
+bias[k,l] = log(2*sigmoid(m[order[l-1], order[k]])), l>=1
+```
+
+to the Decoder's cross-attention logits **before** the original causal
+lower-triangular mask. This is a *soft relationship bias*, not an
+independence test or sparse DAG mask. The actual attention still uses
+the original MAT causal mask: no future actions are visible.
+
+The relation bias is computed once per observation and sampled order.
+During PPO, it is recomputed differentiably using the **saved rollout
+order**, so both action likelihood and ordering likelihood are evaluated
+under the correct current policy. The ordinary `identity`, `obs_norm`,
+and `learned` modes pass `attention_bias=None` and preserve the old
+Decoder computations. CPU tests check teacher-forcing parity, backprop
+through graph scores and no future-action leakage.
+
 ## Candidate DAG and optional offline alignment
 
 `candidate_dag(obs, threshold=0.7, order=stored_order)` returns a
 binary graph `A[i,j] = 1[p_ij>threshold AND rank(i)<rank(j)]`.
 This is an **acyclic projection of directed precedence preferences**.
-Edges are diagnostics, NOT currently used as sparse attention masks and
+Edges are diagnostics, NOT currently used as HARD sparse attention masks and
 NOT proof of environmental or policy causal dependence.
 
 `counterfactual_alignment_loss(obs, influence, valid)` is a CPU/offline
@@ -83,9 +108,9 @@ DRY_RUN=1 STORE_AGENT_ORDERS=1 AGENT_ORDER_MODE=dependency \
 
 The launcher enforces the user's nine-map whitelist in learned/dependency
 mode and rejects any new 3m training. `--store_agent_orders` is mandatory.
-The graph is a *diagnostic* output; neither parallel sampling nor
-attention-based graph masking is enabled, since both require further
-correctness checks and saved graph replay.
+The hard DAG is a *diagnostic* output. The separate **soft** directed
+attention bias IS enabled for dependency mode. Neither hard DAG masking nor
+parallel sampling is enabled without additional tests and replay logic.
 
 ## Strict three-seed exploration protocol
 
