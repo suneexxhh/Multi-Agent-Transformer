@@ -20,6 +20,7 @@ ORDER_TEMPERATURE="${ORDER_TEMPERATURE:-1.0}"
 ORDER_LOSS_COEF="${ORDER_LOSS_COEF:-0.1}"
 ORDER_PAIR_RANK="${ORDER_PAIR_RANK:-16}"
 ORDER_GRAPH_SCALE="${ORDER_GRAPH_SCALE:-0.5}"
+DISABLE_ORDER_ATTENTION_BIAS="${DISABLE_ORDER_ATTENTION_BIAS:-0}"
 # For SC2 startup/resource diagnosis use e.g. N_ROLLOUT_THREADS=2
 # and USE_EVAL=0. Full baseline stays at 32 threads + evaluation by default.
 N_ROLLOUT_THREADS="${N_ROLLOUT_THREADS:-32}"
@@ -189,6 +190,12 @@ if [[ "$AGENT_ORDER_MODE" == "learned" || "$AGENT_ORDER_MODE" == "dependency" ]]
   if [[ "$AGENT_ORDER_MODE" == "dependency" ]]; then
     args+=(--order_pair_rank "$ORDER_PAIR_RANK")
     args+=(--order_graph_scale "$ORDER_GRAPH_SCALE")
+    if [[ "$DISABLE_ORDER_ATTENTION_BIAS" == "1" ]]; then
+      args+=(--disable_order_attention_bias)
+    elif [[ "$DISABLE_ORDER_ATTENTION_BIAS" != "0" ]]; then
+      echo "DISABLE_ORDER_ATTENTION_BIAS must be 0 or 1" >&2
+      exit 2
+    fi
   fi
 fi
 if [[ "$DECODER_DIAG_CAPTURE" == "1" ]]; then
