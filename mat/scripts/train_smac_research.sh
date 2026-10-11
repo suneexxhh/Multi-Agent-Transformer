@@ -18,6 +18,8 @@ AGENT_ORDER_SEED="${AGENT_ORDER_SEED:-1}"
 ORDER_HIDDEN_DIM="${ORDER_HIDDEN_DIM:-64}"
 ORDER_TEMPERATURE="${ORDER_TEMPERATURE:-1.0}"
 ORDER_LOSS_COEF="${ORDER_LOSS_COEF:-0.1}"
+ORDER_PAIR_RANK="${ORDER_PAIR_RANK:-16}"
+ORDER_GRAPH_SCALE="${ORDER_GRAPH_SCALE:-0.5}"
 # For SC2 startup/resource diagnosis use e.g. N_ROLLOUT_THREADS=2
 # and USE_EVAL=0. Full baseline stays at 32 threads + evaluation by default.
 N_ROLLOUT_THREADS="${N_ROLLOUT_THREADS:-32}"
@@ -56,10 +58,10 @@ if [[ "$DECODER_DIAG_CAPTURE" == "1" && ! "$DECODER_DIAG_CAPTURE_EPISODES" =~ ^[
   exit 2
 fi
 case "$AGENT_ORDER_MODE" in
-  identity|random_fixed|obs_norm|learned) ;;
+  identity|random_fixed|obs_norm|learned|dependency) ;;
   *) echo "Unknown AGENT_ORDER_MODE: $AGENT_ORDER_MODE" >&2; exit 2 ;;
 esac
-if [[ "$AGENT_ORDER_MODE" == "learned" ]]; then
+if [[ "$AGENT_ORDER_MODE" == "learned" || "$AGENT_ORDER_MODE" == "dependency" ]]; then
   if [[ "$STORE_AGENT_ORDERS" != "1" ]]; then
     echo "learned ordering requires STORE_AGENT_ORDERS=1 for PPO replay" >&2
     exit 2
@@ -176,10 +178,14 @@ fi
 if [[ "$STORE_AGENT_ORDERS" == "1" ]]; then
   args+=(--store_agent_orders)
 fi
-if [[ "$AGENT_ORDER_MODE" == "learned" ]]; then
+if [[ "$AGENT_ORDER_MODE" == "learned" || "$AGENT_ORDER_MODE" == "dependency" ]]; then
   args+=(--order_hidden_dim "$ORDER_HIDDEN_DIM")
   args+=(--order_temperature "$ORDER_TEMPERATURE")
   args+=(--order_loss_coef "$ORDER_LOSS_COEF")
+  if [[ "$AGENT_ORDER_MODE" == "dependency" ]]; then
+    args+=(--order_pair_rank "$ORDER_PAIR_RANK")
+    args+=(--order_graph_scale "$ORDER_GRAPH_SCALE")
+  fi
 fi
 if [[ "$DECODER_DIAG_CAPTURE" == "1" ]]; then
   args+=(--decoder_diag_capture_dir "$LOG_DIR")
