@@ -43,13 +43,13 @@ JS 在合法目标动作上按 double precision log-softmax 求值，取值区�
 原始 JS 强烈受源/目标槽位及目标动作熵影响。将同一 minibatch 按 `(source_slot, target_slot, target_entropy_bin)` 分层；每层至少 2 个有效状态。用层均值 \(\mu_g\) 得到残差 \(\delta=J-\mu_g\)，并构造软目标
 
 \[
-y_{t,s}=\tfrac12+\tfrac12\tanh(\delta_{t,s}/\tau),\quad \tau=0.03.
+y_{t,s}=\tfrac12+\tfrac12\tanh(\delta_{t,s}/\tau),\quad \tau=10^{-5}\ \text{nats}.
 \]
 
 置信权重为
 
 \[
-w_{t,s}=\mathbf1[|\delta|\ge10^{-4}]
+w_{t,s}=\mathbf1[|\delta|\ge10^{-7}]
 \min(1,|\delta|/\tau)
 \frac{\#\text{选取替代动作}}{\#\text{全部合法替代动作}}
 \frac{H(\pi^0_t)}{\ln |A_t|}
@@ -57,6 +57,8 @@ w_{t,s}=\mathbf1[|\delta|\ge10^{-4}]
 \]
 
 所有 target 与 confidence `detach()`。未观测方向和单例层的权重为 0，不能用 0 JS 假装“无依赖”。监督直接作用于同一排列位置映射的 \(d_{\sigma_t\leftarrow\sigma_s}\)：
+
+`τ` 与有效性门槛分别由 `--order_influence_effect_scale`、`--order_influence_min_effect` 设置并写入 manifest。其默认值参考 V2 真实状态实验中约 `1.5×10⁻⁵` nats 的平均条件动作 JS；这是**量纲标定**而非经训练验证的最优超参数。分层残差可能比原始 JS 小一个数量级，因此门槛设为 `10⁻⁷`，并必须监测实际受监督比例及噪声敏感性。
 
 \[
 L_{\mathrm{align}}=\frac{\sum_{b,t,s}w_{b,t,s}\,

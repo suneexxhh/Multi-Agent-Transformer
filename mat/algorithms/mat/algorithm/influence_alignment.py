@@ -114,8 +114,8 @@ def conditional_action_js(teacher, obs, actions, available_actions, order,
 
 
 def alignment_targets(js, valid, entropy, alt_count, legal_counts,
-                      max_alternatives=2, entropy_bins=4, effect_scale=0.03,
-                      min_effect=1e-4):
+                      max_alternatives=2, entropy_bins=4, effect_scale=1e-5,
+                      min_effect=1e-7):
     """Match source/target slots and target-entropy bins before labeling.
 
     Center each observed JS against its stratum mean. Thus the target asks

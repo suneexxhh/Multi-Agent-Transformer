@@ -50,10 +50,14 @@ class TestPrefixDependencyLauncher(unittest.TestCase):
         full = dry(ADAPTIVE_ORDER_ATTENTION_BIAS="1",
                    ORDER_INFLUENCE_ALIGN_COEF="0.2",
                    ORDER_ATTENTION_SCALE_MAX="1.5",
+                   ORDER_INFLUENCE_EFFECT_SCALE="0.00002",
+                   ORDER_INFLUENCE_MIN_EFFECT="0.0000002",
                    ORDER_INFLUENCE_MAX_ALTERNATIVES="3")
         self.assertEqual(full.returncode, 0, full.stderr)
         for flag in ("--adaptive_order_attention_bias", "--order_attention_scale_max 1.5",
                      "--order_influence_align_coef 0.2",
+                     "--order_influence_effect_scale 0.00002",
+                     "--order_influence_min_effect 0.0000002",
                      "--order_influence_max_alternatives 3"):
             self.assertIn(flag, full.stdout)
         invalid = dry(ADAPTIVE_ORDER_ATTENTION_BIAS="1",

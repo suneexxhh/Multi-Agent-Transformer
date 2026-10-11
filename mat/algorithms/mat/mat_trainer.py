@@ -46,12 +46,17 @@ class MATTrainer:
         self.order_loss_coef = getattr(args, "order_loss_coef", 0.1)
         self.order_influence_align_coef = float(getattr(args, "order_influence_align_coef", 0.0))
         self.order_influence_max_alternatives = getattr(args, "order_influence_max_alternatives", 2)
+        self.order_influence_effect_scale = float(getattr(args, "order_influence_effect_scale", 1e-5))
+        self.order_influence_min_effect = float(getattr(args, "order_influence_min_effect", 1e-7))
         if self.order_influence_align_coef < 0 or not np.isfinite(self.order_influence_align_coef):
             raise ValueError("order_influence_align_coef must be finite and nonnegative")
         if self.order_influence_align_coef and getattr(args, "agent_order_mode", None) != "dependency_prefix":
             raise ValueError("influence alignment requires dependency_prefix")
         if not isinstance(self.order_influence_max_alternatives, int) or self.order_influence_max_alternatives < 1:
             raise ValueError("order_influence_max_alternatives must be positive")
+        if (not np.isfinite(self.order_influence_effect_scale) or self.order_influence_effect_scale <= 0 or
+                not np.isfinite(self.order_influence_min_effect) or self.order_influence_min_effect < 0):
+            raise ValueError("invalid influence effect scale or floor")
         self._influence_teacher = None
         if self.learned_orders and self.order_loss_coef <= 0:
             raise ValueError("learned-order PPO requires positive order_loss_coef")
@@ -240,7 +245,9 @@ class MATTrainer:
             from mat.algorithms.mat.algorithm.agent_ordering import reorder_agents
             targets, confidence = alignment_targets(
                 js, valid, entropy, alt_count, reorder_agents(legal, order).sum(-1),
-                max_alternatives=self.order_influence_max_alternatives)
+                max_alternatives=self.order_influence_max_alternatives,
+                effect_scale=self.order_influence_effect_scale,
+                min_effect=self.order_influence_min_effect)
             influence_loss = influence_alignment_loss(
                 self.policy.transformer.order_policy, obs, order, targets, confidence)
             loss = loss + self.order_influence_align_coef * influence_loss

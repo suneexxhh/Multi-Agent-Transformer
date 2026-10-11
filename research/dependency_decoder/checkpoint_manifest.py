@@ -15,6 +15,8 @@ LEGACY_MODEL_DEFAULTS = {
     "order_attention_scale_max": 2.0,
     "order_influence_align_coef": 0.0,
     "order_influence_max_alternatives": 2,
+    "order_influence_effect_scale": 1e-5,
+    "order_influence_min_effect": 1e-7,
 }
 MODEL_FIELDS = (
     "env_name", "map_name", "algorithm_name", "agent_order_mode",
@@ -24,6 +26,7 @@ MODEL_FIELDS = (
     "share_actor", "store_agent_orders", "agent_order_seed",
     "adaptive_order_attention_bias", "order_attention_scale_max",
     "order_influence_align_coef", "order_influence_max_alternatives",
+    "order_influence_effect_scale", "order_influence_min_effect",
 )
 PROTOCOL_FIELDS = (
     "seed", "n_rollout_threads", "n_eval_rollout_threads",
@@ -46,7 +49,9 @@ def build_training_manifest(all_args, source_sha, source_dirty=False):
     if (not math.isfinite(cfg["order_attention_scale_max"]) or cfg["order_attention_scale_max"] <= 0 or
             not math.isfinite(cfg["order_influence_align_coef"]) or cfg["order_influence_align_coef"] < 0 or
             not isinstance(cfg["order_influence_max_alternatives"], int) or
-            cfg["order_influence_max_alternatives"] < 1):
+            cfg["order_influence_max_alternatives"] < 1 or
+            not math.isfinite(cfg["order_influence_effect_scale"]) or cfg["order_influence_effect_scale"] <= 0 or
+            not math.isfinite(cfg["order_influence_min_effect"]) or cfg["order_influence_min_effect"] < 0):
         raise ValueError("invalid V3.1 model hyperparameters")
     if cfg["order_influence_align_coef"] and cfg["agent_order_mode"] != "dependency_prefix":
         raise ValueError("influence alignment requires dependency_prefix")
@@ -95,7 +100,9 @@ def load_training_manifest(path, map_name, mode):
     if (not math.isfinite(cfg["order_attention_scale_max"]) or cfg["order_attention_scale_max"] <= 0 or
             not math.isfinite(cfg["order_influence_align_coef"]) or cfg["order_influence_align_coef"] < 0 or
             not isinstance(cfg["order_influence_max_alternatives"], int) or
-            cfg["order_influence_max_alternatives"] < 1):
+            cfg["order_influence_max_alternatives"] < 1 or
+            not math.isfinite(cfg["order_influence_effect_scale"]) or cfg["order_influence_effect_scale"] <= 0 or
+            not math.isfinite(cfg["order_influence_min_effect"]) or cfg["order_influence_min_effect"] < 0):
         raise ValueError("invalid V3.1 checkpoint hyperparameters")
     if cfg["order_influence_align_coef"] and mode != "dependency_prefix":
         raise ValueError("invalid influence alignment manifest")
@@ -109,7 +116,8 @@ def evaluation_model_flags(manifest):
     for k in ("n_block", "n_embd", "n_head", "order_hidden_dim",
               "order_temperature", "order_pair_rank", "order_graph_scale",
               "order_prefix_scale", "agent_order_seed", "order_attention_scale_max",
-              "order_influence_align_coef", "order_influence_max_alternatives"):
+              "order_influence_align_coef", "order_influence_max_alternatives",
+              "order_influence_effect_scale", "order_influence_min_effect"):
         flags += ["--" + k, str(cfg[k])]
     for name in ("encode_state", "share_actor", "store_agent_orders",
                  "disable_order_attention_bias", "adaptive_order_attention_bias"):

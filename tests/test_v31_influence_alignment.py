@@ -127,6 +127,19 @@ class TestV31InfluenceTeacher(unittest.TestCase):
                                           max_alternatives=1)
         self.assertEqual(confidence[2, 2, 0].item(), 0.)
 
+    def test_v2_scale_js_is_not_silently_filtered(self):
+        js = torch.zeros(3, 3, 3)
+        js[:, 2, 0] = torch.tensor([5e-6, 1.5e-5, 3e-5])
+        valid = torch.zeros_like(js, dtype=torch.bool)
+        valid[:, 2, 0] = True
+        entropy = torch.full((3, 3), math.log(2.))
+        legal_counts = torch.full((3, 3), 2, dtype=torch.long)
+        alt_count = torch.ones(3, 3, dtype=torch.long)
+        targets, confidence = alignment_targets(js, valid, entropy, alt_count,
+                                                legal_counts, max_alternatives=1)
+        self.assertGreater((confidence > 0).sum().item(), 1)
+        self.assertGreater((targets[:, 2, 0] - .5).abs().max().item(), .1)
+
 
 class TestV31Model(unittest.TestCase):
     def model(self, mode="dependency_prefix", adaptive=False, attention=True):
@@ -279,7 +292,8 @@ class TestV31Model(unittest.TestCase):
             legacy["schema_version"] = 1
             legacy["config"] = {k: v for k, v in manifest["config"].items()
                                 if k not in ("adaptive_order_attention_bias", "order_attention_scale_max",
-                                             "order_influence_align_coef", "order_influence_max_alternatives")}
+                                             "order_influence_align_coef", "order_influence_max_alternatives",
+                                             "order_influence_effect_scale", "order_influence_min_effect")}
             path.write_text(json.dumps(legacy))
             self.assertFalse(load_training_manifest(path, "3s5z", "dependency_prefix")
                              ["config"]["adaptive_order_attention_bias"])

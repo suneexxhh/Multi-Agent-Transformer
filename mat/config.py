@@ -318,6 +318,10 @@ def get_config():
                         help="V3.1 optional frozen Bias-OFF policy influence alignment weight")
     parser.add_argument("--order_influence_max_alternatives", type=int, default=2,
                         help="Maximum legal counterfactual action IDs per source and state")
+    parser.add_argument("--order_influence_effect_scale", type=float, default=1e-5,
+                        help="JS residual scale for V3.1 soft influence labels")
+    parser.add_argument("--order_influence_min_effect", type=float, default=1e-7,
+                        help="Minimum within-stratum JS residual for nonzero confidence")
     parser.add_argument("--order_loss_coef", type=float, default=0.1,
                         help="Learned-order PPO loss weight (pilot; factor-wise clipping)")
     parser.add_argument("--store_agent_orders", action="store_true", default=False,
