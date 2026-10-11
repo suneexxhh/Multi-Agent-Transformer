@@ -306,6 +306,8 @@ def get_config():
                         help="Low-rank directed precedence dimension; dependency mode only")
     parser.add_argument("--order_graph_scale", type=float, default=0.5,
                         help="Initial positive directed-score gain; dependency mode only")
+    parser.add_argument("--disable_order_attention_bias", action="store_true", default=False,
+                        help="Ablation: retain directed ordering but disable relation-conditioned MAT attention")
     parser.add_argument("--order_loss_coef", type=float, default=0.1,
                         help="Learned-order PPO loss weight (pilot; factor-wise clipping)")
     parser.add_argument("--store_agent_orders", action="store_true", default=False,
