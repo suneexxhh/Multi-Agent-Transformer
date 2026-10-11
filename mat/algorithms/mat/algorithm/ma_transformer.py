@@ -15,6 +15,7 @@ from mat.algorithms.utils.transformer_act import (
 )
 from mat.algorithms.mat.algorithm.agent_ordering import compute_agent_order, validate_agent_order
 from mat.algorithms.mat.algorithm.learned_agent_order import LearnedAgentOrder
+from mat.algorithms.mat.algorithm.directed_dependency_order import DirectedDependencyOrder
 
 def init_(m, gain=0.01, activate=False):
     if activate:
@@ -43,7 +44,7 @@ class SelfAttention(nn.Module):
 
         self.att_bp = None
 
-    def forward(self, key, value, query):
+    def forward(self, key, value, query, attention_bias=None):
         B, L, D = query.size()
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
@@ -53,6 +54,14 @@ class SelfAttention(nn.Module):
 
         # causal attention: (B, nh, L, hs) x (B, nh, hs, L) -> (B, nh, L, L)
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+
+        # Optional directed preference bias in decoded-position coordinates.
+        # The causal triangular mask still prevents future-action access.
+        if attention_bias is not None:
+            if (not self.masked or attention_bias.shape != (B, L, L) or
+                    not torch.isfinite(attention_bias).all()):
+                raise ValueError("attention_bias requires finite [B,N,N] masked attention")
+            att = att + attention_bias.unsqueeze(1)
 
         # self.att_bp = F.softmax(att, dim=-1)
 
@@ -107,9 +116,10 @@ class DecodeBlock(nn.Module):
             init_(nn.Linear(1 * n_embd, n_embd))
         )
 
-    def forward(self, x, rep_enc):
+    def forward(self, x, rep_enc, attention_bias=None):
         x = self.ln1(x + self.attn1(x, x, x))
-        x = self.ln2(rep_enc + self.attn2(key=x, value=x, query=rep_enc))
+        x = self.ln2(rep_enc + self.attn2(
+            key=x, value=x, query=rep_enc, attention_bias=attention_bias))
         x = self.ln3(x + self.mlp(x))
         return x
 
@@ -205,7 +215,7 @@ class Decoder(nn.Module):
             self.log_std.data = log_std
 
     # state, action, and return
-    def forward(self, action, obs_rep, obs):
+    def forward(self, action, obs_rep, obs, attention_bias=None):
         # action: (batch, n_agent, action_dim), one-hot/logits?
         # obs_rep: (batch, n_agent, n_embd)
         if self.dec_actor:
@@ -221,7 +231,7 @@ class Decoder(nn.Module):
             action_embeddings = self.action_encoder(action)
             x = self.ln(action_embeddings)
             for block in self.blocks:
-                x = block(x, obs_rep)
+                x = block(x, obs_rep, attention_bias=attention_bias)
             logit = self.head(x)
 
         return logit
@@ -233,7 +243,8 @@ class MultiAgentTransformer(nn.Module):
                  n_block, n_embd, n_head, encode_state=False, device=torch.device("cpu"),
                  action_type='Discrete', dec_actor=False, share_actor=False,
                  agent_order_mode='identity', agent_order_seed=1,
-                 order_hidden_dim=64, order_temperature=1.0):
+                 order_hidden_dim=64, order_temperature=1.0,
+                 order_pair_rank=16, order_graph_scale=0.5):
         super(MultiAgentTransformer, self).__init__()
 
         self.n_agent = n_agent
@@ -243,8 +254,15 @@ class MultiAgentTransformer(nn.Module):
         self.device = device
         self.agent_order_mode = agent_order_mode
         self.agent_order_seed = agent_order_seed
-        self.order_policy = (LearnedAgentOrder(obs_dim, order_hidden_dim, order_temperature)
-                             if agent_order_mode == 'learned' else None)
+        if agent_order_mode == 'learned':
+            self.order_policy = LearnedAgentOrder(
+                obs_dim, order_hidden_dim, order_temperature)
+        elif agent_order_mode == 'dependency':
+            self.order_policy = DirectedDependencyOrder(
+                obs_dim, order_hidden_dim, order_temperature,
+                pair_rank=order_pair_rank, graph_scale=order_graph_scale)
+        else:
+            self.order_policy = None
         if dec_actor and agent_order_mode != 'identity':
             raise ValueError("V0 agent ordering only supports Transformer Decoder (mat), not dec_actor.")
 
@@ -291,26 +309,31 @@ class MultiAgentTransformer(nn.Module):
             raise ValueError("order log probability available only for learned ordering")
         order_log_prob = (self.order_policy.log_prob(obs, agent_order)
                           if return_order_log_prob else None)
+        attention_bias = (self.order_policy.conditioning_bias(obs, agent_order)
+                          if isinstance(self.order_policy, DirectedDependencyOrder) else None)
         if self.action_type == 'Discrete':
             action = action.long()
             if agent_order is None:
                 action_log, entropy = discrete_parallel_act(
                     self.decoder, obs_rep, obs, action, batch_size,
-                    self.n_agent, self.action_dim, self.tpdv, available_actions)
+                    self.n_agent, self.action_dim, self.tpdv, available_actions,
+                    attention_bias=attention_bias)
             else:
                 action_log, entropy = discrete_parallel_ordered_act(
                     self.decoder, obs_rep, obs, action, batch_size,
                     self.n_agent, self.action_dim, self.tpdv,
-                    agent_order, available_actions)
+                    agent_order, available_actions, attention_bias=attention_bias)
         else:
             if agent_order is None:
                 action_log, entropy = continuous_parallel_act(
                     self.decoder, obs_rep, obs, action, batch_size,
-                    self.n_agent, self.action_dim, self.tpdv)
+                    self.n_agent, self.action_dim, self.tpdv,
+                    attention_bias=attention_bias)
             else:
                 action_log, entropy = continuous_parallel_ordered_act(
                     self.decoder, obs_rep, obs, action, batch_size,
-                    self.n_agent, self.action_dim, self.tpdv, agent_order)
+                    self.n_agent, self.action_dim, self.tpdv, agent_order,
+                    attention_bias=attention_bias)
 
         if return_order_log_prob:
             return action_log, v_loc, entropy, order_log_prob
@@ -338,25 +361,29 @@ class MultiAgentTransformer(nn.Module):
             agent_order, _ = self.order_policy.sample(obs, deterministic=deterministic)
         elif self.agent_order_mode != 'identity':
             agent_order = compute_agent_order(obs, self.agent_order_mode, self.agent_order_seed)
+        attention_bias = (self.order_policy.conditioning_bias(obs, agent_order)
+                          if isinstance(self.order_policy, DirectedDependencyOrder) else None)
         if self.action_type == "Discrete":
             if agent_order is None:
                 output_action, output_action_log = discrete_autoregreesive_act(
                     self.decoder, obs_rep, obs, batch_size, self.n_agent,
-                    self.action_dim, self.tpdv, available_actions, deterministic)
+                    self.action_dim, self.tpdv, available_actions, deterministic,
+                    attention_bias=attention_bias)
             else:
                 output_action, output_action_log = discrete_autoregreesive_ordered_act(
                     self.decoder, obs_rep, obs, batch_size, self.n_agent,
                     self.action_dim, self.tpdv, agent_order,
-                    available_actions, deterministic)
+                    available_actions, deterministic, attention_bias=attention_bias)
         else:
             if agent_order is None:
                 output_action, output_action_log = continuous_autoregreesive_act(
                     self.decoder, obs_rep, obs, batch_size, self.n_agent,
-                    self.action_dim, self.tpdv, deterministic)
+                    self.action_dim, self.tpdv, deterministic, attention_bias=attention_bias)
             else:
                 output_action, output_action_log = continuous_autoregreesive_ordered_act(
                     self.decoder, obs_rep, obs, batch_size, self.n_agent,
-                    self.action_dim, self.tpdv, agent_order, deterministic)
+                    self.action_dim, self.tpdv, agent_order, deterministic,
+                    attention_bias=attention_bias)
 
         if return_agent_order:
             # This is the exact rollout permutation, not a future

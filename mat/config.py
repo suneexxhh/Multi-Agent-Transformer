@@ -293,7 +293,7 @@ def get_config():
     parser.add_argument("--dec_actor", action='store_true', default=False)
     parser.add_argument("--share_actor", action='store_true', default=False)
     parser.add_argument("--agent_order_mode", type=str, default="identity",
-                        choices=["identity", "random_fixed", "obs_norm", "learned"],
+                        choices=["identity", "random_fixed", "obs_norm", "learned", "dependency"],
                         help="V0 MAT decoder order: original, seeded static random, or observation norm priority")
     parser.add_argument("--agent_order_seed", type=int, default=1,
                         help="Seed of static random agent order (separate from environment seed)")
@@ -302,6 +302,10 @@ def get_config():
                         help="Learned permutation actor hidden dimension")
     parser.add_argument("--order_temperature", type=float, default=1.,
                         help="Positive Plackett-Luce sampling temperature")
+    parser.add_argument("--order_pair_rank", type=int, default=16,
+                        help="Low-rank directed precedence dimension; dependency mode only")
+    parser.add_argument("--order_graph_scale", type=float, default=0.5,
+                        help="Initial positive directed-score gain; dependency mode only")
     parser.add_argument("--order_loss_coef", type=float, default=0.1,
                         help="Learned-order PPO loss weight (pilot; factor-wise clipping)")
     parser.add_argument("--store_agent_orders", action="store_true", default=False,

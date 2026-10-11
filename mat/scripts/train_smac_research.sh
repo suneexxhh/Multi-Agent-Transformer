@@ -18,6 +18,8 @@ AGENT_ORDER_SEED="${AGENT_ORDER_SEED:-1}"
 ORDER_HIDDEN_DIM="${ORDER_HIDDEN_DIM:-64}"
 ORDER_TEMPERATURE="${ORDER_TEMPERATURE:-1.0}"
 ORDER_LOSS_COEF="${ORDER_LOSS_COEF:-0.1}"
+ORDER_PAIR_RANK="${ORDER_PAIR_RANK:-16}"
+ORDER_GRAPH_SCALE="${ORDER_GRAPH_SCALE:-0.5}"
 # For SC2 startup/resource diagnosis use e.g. N_ROLLOUT_THREADS=2
 # and USE_EVAL=0. Full baseline stays at 32 threads + evaluation by default.
 N_ROLLOUT_THREADS="${N_ROLLOUT_THREADS:-32}"
@@ -56,10 +58,10 @@ if [[ "$DECODER_DIAG_CAPTURE" == "1" && ! "$DECODER_DIAG_CAPTURE_EPISODES" =~ ^[
   exit 2
 fi
 case "$AGENT_ORDER_MODE" in
-  identity|random_fixed|obs_norm|learned) ;;
+  identity|random_fixed|obs_norm|learned|dependency) ;;
   *) echo "Unknown AGENT_ORDER_MODE: $AGENT_ORDER_MODE" >&2; exit 2 ;;
 esac
-if [[ "$AGENT_ORDER_MODE" == "learned" ]]; then
+if [[ "$AGENT_ORDER_MODE" == "learned" || "$AGENT_ORDER_MODE" == "dependency" ]]; then
   if [[ "$STORE_AGENT_ORDERS" != "1" ]]; then
     echo "learned ordering requires STORE_AGENT_ORDERS=1 for PPO replay" >&2
     exit 2
@@ -145,7 +147,8 @@ if [[ ! "$SEED" =~ ^[0-9]+$ ]]; then
 fi
 STAMP="$(date +%Y%m%d_%H%M%S_%N)"
 EXP_NAME="${EXP_TAG}_${AGENT_ORDER_MODE}_orderseed${AGENT_ORDER_SEED}_seed${SEED}"
-LOG_DIR="$SCRIPT_DIR/logs"
+LOG_DIR="${MAT_DECODER_LOG_DIR:-$SCRIPT_DIR/logs}"
+RESULTS_ROOT="${MAT_DECODER_RESULTS_ROOT:-}"
 LOG_FILE="$LOG_DIR/${LOG_METHOD_NAME}_seed${SEED}_${STAMP}.log"
 MAT_CONDA_ENV="${MAT_CONDA_ENV:-new_titans}"
 
@@ -176,10 +179,17 @@ fi
 if [[ "$STORE_AGENT_ORDERS" == "1" ]]; then
   args+=(--store_agent_orders)
 fi
-if [[ "$AGENT_ORDER_MODE" == "learned" ]]; then
+if [[ -n "$RESULTS_ROOT" ]]; then
+  args+=(--run_dir "$RESULTS_ROOT")
+fi
+if [[ "$AGENT_ORDER_MODE" == "learned" || "$AGENT_ORDER_MODE" == "dependency" ]]; then
   args+=(--order_hidden_dim "$ORDER_HIDDEN_DIM")
   args+=(--order_temperature "$ORDER_TEMPERATURE")
   args+=(--order_loss_coef "$ORDER_LOSS_COEF")
+  if [[ "$AGENT_ORDER_MODE" == "dependency" ]]; then
+    args+=(--order_pair_rank "$ORDER_PAIR_RANK")
+    args+=(--order_graph_scale "$ORDER_GRAPH_SCALE")
+  fi
 fi
 if [[ "$DECODER_DIAG_CAPTURE" == "1" ]]; then
   args+=(--decoder_diag_capture_dir "$LOG_DIR")
@@ -229,6 +239,7 @@ run_training() {
   printf 'rollout_threads=%s training_threads=%s eval_threads=%s eval_episodes=%s use_eval=%s\n' \
     "$N_ROLLOUT_THREADS" "$N_TRAINING_THREADS" "$N_EVAL_ROLLOUT_THREADS" "$EVAL_EPISODES" "$USE_EVAL"
   printf 'repository_root=%s\nlog_file=%s\n' "$REPO_ROOT" "$LOG_FILE"
+  printf 'results_root=%s\n' "${RESULTS_ROOT:-default_repo_results}"
   printf 'command: CUDA_VISIBLE_DEVICES=%q %q -u train/train_smac.py ' "$GPU_ID" "$PYTHON_BIN"
   printf '%q ' "${args[@]}"
   printf '\n'
