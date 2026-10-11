@@ -21,6 +21,7 @@ ORDER_LOSS_COEF="${ORDER_LOSS_COEF:-0.1}"
 ORDER_PAIR_RANK="${ORDER_PAIR_RANK:-16}"
 ORDER_GRAPH_SCALE="${ORDER_GRAPH_SCALE:-0.5}"
 SAVE_INTERVAL_UPDATES="${SAVE_INTERVAL_UPDATES:-100000}"
+EVAL_INTERVAL_UPDATES="${EVAL_INTERVAL_UPDATES:-25}"
 DISABLE_ORDER_ATTENTION_BIAS="${DISABLE_ORDER_ATTENTION_BIAS:-0}"
 # For SC2 startup/resource diagnosis use e.g. N_ROLLOUT_THREADS=2
 # and USE_EVAL=0. Full baseline stays at 32 threads + evaluation by default.
@@ -96,7 +97,7 @@ CLIP_PARAM="${CLIP_PARAM:-$default_clip}"
 # Fail before SC2/GPU work on invalid budgets. Distinguish the archived
 # MAT-MSA reference from short pilot runs and never silently promote
 # a pilot experiment to full reference status.
-for positive_int in "$NUM_ENV_STEPS" "$PPO_EPOCH" "$SAVE_INTERVAL_UPDATES"; do
+for positive_int in "$NUM_ENV_STEPS" "$PPO_EPOCH" "$SAVE_INTERVAL_UPDATES" "$EVAL_INTERVAL_UPDATES"; do
   if ! [[ "$positive_int" =~ ^[1-9][0-9]*$ ]]; then
     echo "NUM_ENV_STEPS and PPO_EPOCH must be positive integers" >&2
     exit 2
@@ -173,6 +174,7 @@ args=(
   --ppo_epoch "$PPO_EPOCH"
   --clip_param "$CLIP_PARAM"
   --save_interval "$SAVE_INTERVAL_UPDATES"
+  --eval_interval "$EVAL_INTERVAL_UPDATES"
   --use_value_active_masks
 )
 if [[ "$USE_EVAL" == "1" ]]; then
@@ -242,6 +244,7 @@ run_training() {
   fi
   printf 'agent_order_mode=%s agent_order_seed=%s\n' "$AGENT_ORDER_MODE" "$AGENT_ORDER_SEED"
   printf 'save_interval_updates=%s\n' "$SAVE_INTERVAL_UPDATES"
+  printf 'eval_interval_updates=%s\n' "$EVAL_INTERVAL_UPDATES"
   printf 'store_agent_orders=%s\n' "$STORE_AGENT_ORDERS"
   printf 'decoder_diag_capture=%s\n' "$DECODER_DIAG_CAPTURE"
   printf 'decoder_diag_capture_episodes=%s\n' "$DECODER_DIAG_CAPTURE_EPISODES"
