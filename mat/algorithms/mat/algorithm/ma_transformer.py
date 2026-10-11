@@ -244,7 +244,8 @@ class MultiAgentTransformer(nn.Module):
                  action_type='Discrete', dec_actor=False, share_actor=False,
                  agent_order_mode='identity', agent_order_seed=1,
                  order_hidden_dim=64, order_temperature=1.0,
-                 order_pair_rank=16, order_graph_scale=0.5):
+                 order_pair_rank=16, order_graph_scale=0.5,
+                 order_attention_bias=True):
         super(MultiAgentTransformer, self).__init__()
 
         self.n_agent = n_agent
@@ -254,24 +255,28 @@ class MultiAgentTransformer(nn.Module):
         self.device = device
         self.agent_order_mode = agent_order_mode
         self.agent_order_seed = agent_order_seed
-        if agent_order_mode == 'learned':
-            self.order_policy = LearnedAgentOrder(
-                obs_dim, order_hidden_dim, order_temperature)
-        elif agent_order_mode == 'dependency':
-            self.order_policy = DirectedDependencyOrder(
-                obs_dim, order_hidden_dim, order_temperature,
-                pair_rank=order_pair_rank, graph_scale=order_graph_scale)
-        else:
-            self.order_policy = None
+        self.order_attention_bias = bool(order_attention_bias)
         if dec_actor and agent_order_mode != 'identity':
-            raise ValueError("V0 agent ordering only supports Transformer Decoder (mat), not dec_actor.")
+            raise ValueError("Agent ordering supports original MAT Transformer Decoder, not dec_actor.")
 
-        # state unused
-        state_dim = 37
-
+        # Initialize the shared MAT trunk first, in the same RNG sequence
+        # for identity/obs_norm/learned/dependency at the SAME seed. The
+        # optional ordering actor must NOT shift Encoder/Decoder weights
+        # or consume the subsequent global rollout RNG stream.
+        state_dim = 37  # MAT's original (unused) state input
         self.encoder = Encoder(state_dim, obs_dim, n_block, n_embd, n_head, n_agent, encode_state)
         self.decoder = Decoder(obs_dim, action_dim, n_block, n_embd, n_head, n_agent,
                                self.action_type, dec_actor=dec_actor, share_actor=share_actor)
+        with torch.random.fork_rng(devices=[]):
+            if agent_order_mode == 'learned':
+                self.order_policy = LearnedAgentOrder(
+                    obs_dim, order_hidden_dim, order_temperature)
+            elif agent_order_mode == 'dependency':
+                self.order_policy = DirectedDependencyOrder(
+                    obs_dim, order_hidden_dim, order_temperature,
+                    pair_rank=order_pair_rank, graph_scale=order_graph_scale)
+            else:
+                self.order_policy = None
         self.to(device)
 
     def zero_std(self):
@@ -310,7 +315,8 @@ class MultiAgentTransformer(nn.Module):
         order_log_prob = (self.order_policy.log_prob(obs, agent_order)
                           if return_order_log_prob else None)
         attention_bias = (self.order_policy.conditioning_bias(obs, agent_order)
-                          if isinstance(self.order_policy, DirectedDependencyOrder) else None)
+                          if isinstance(self.order_policy, DirectedDependencyOrder)
+                          and self.order_attention_bias else None)
         if self.action_type == 'Discrete':
             action = action.long()
             if agent_order is None:
