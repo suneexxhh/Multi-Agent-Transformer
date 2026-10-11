@@ -21,6 +21,12 @@ ORDER_LOSS_COEF="${ORDER_LOSS_COEF:-0.1}"
 ORDER_PAIR_RANK="${ORDER_PAIR_RANK:-16}"
 ORDER_GRAPH_SCALE="${ORDER_GRAPH_SCALE:-0.5}"
 ORDER_PREFIX_SCALE="${ORDER_PREFIX_SCALE:-1.0}"
+ADAPTIVE_ORDER_ATTENTION_BIAS="${ADAPTIVE_ORDER_ATTENTION_BIAS:-0}"
+ORDER_ATTENTION_SCALE_MAX="${ORDER_ATTENTION_SCALE_MAX:-2.0}"
+ORDER_INFLUENCE_ALIGN_COEF="${ORDER_INFLUENCE_ALIGN_COEF:-0.0}"
+ORDER_INFLUENCE_MAX_ALTERNATIVES="${ORDER_INFLUENCE_MAX_ALTERNATIVES:-2}"
+ORDER_INFLUENCE_EFFECT_SCALE="${ORDER_INFLUENCE_EFFECT_SCALE:-0.00001}"
+ORDER_INFLUENCE_MIN_EFFECT="${ORDER_INFLUENCE_MIN_EFFECT:-0.0000001}"
 SAVE_INTERVAL_UPDATES="${SAVE_INTERVAL_UPDATES:-100000}"
 EVAL_INTERVAL_UPDATES="${EVAL_INTERVAL_UPDATES:-25}"
 DISABLE_ORDER_ATTENTION_BIAS="${DISABLE_ORDER_ATTENTION_BIAS:-0}"
@@ -65,6 +71,31 @@ case "$AGENT_ORDER_MODE" in
   identity|random_fixed|obs_norm|learned|dependency|dependency_prefix) ;;
   *) echo "Unknown AGENT_ORDER_MODE: $AGENT_ORDER_MODE" >&2; exit 2 ;;
 esac
+if [[ "$ADAPTIVE_ORDER_ATTENTION_BIAS" != "0" && "$ADAPTIVE_ORDER_ATTENTION_BIAS" != "1" ]]; then
+  echo "ADAPTIVE_ORDER_ATTENTION_BIAS must be 0 or 1" >&2; exit 2
+fi
+if ! [[ "$ORDER_INFLUENCE_ALIGN_COEF" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "ORDER_INFLUENCE_ALIGN_COEF must be finite and nonnegative" >&2; exit 2
+fi
+if ! [[ "$ORDER_ATTENTION_SCALE_MAX" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
+   [[ "$ORDER_ATTENTION_SCALE_MAX" =~ ^0+([.]0+)?$ ]]; then
+  echo "ORDER_ATTENTION_SCALE_MAX must be finite and positive" >&2; exit 2
+fi
+if [[ "$ADAPTIVE_ORDER_ATTENTION_BIAS" == "1" && ( "$AGENT_ORDER_MODE" != "dependency_prefix" || "$DISABLE_ORDER_ATTENTION_BIAS" != "0" ) ]]; then
+  echo "adaptive bias requires enabled dependency_prefix attention" >&2; exit 2
+fi
+if ! [[ "$ORDER_INFLUENCE_ALIGN_COEF" =~ ^0+([.]0+)?$ ]] &&
+   [[ "$AGENT_ORDER_MODE" != "dependency_prefix" ]]; then
+  echo "influence alignment requires dependency_prefix" >&2; exit 2
+fi
+if ! [[ "$ORDER_INFLUENCE_MAX_ALTERNATIVES" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ORDER_INFLUENCE_MAX_ALTERNATIVES must be positive" >&2; exit 2
+fi
+if ! [[ "$ORDER_INFLUENCE_EFFECT_SCALE" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
+   [[ "$ORDER_INFLUENCE_EFFECT_SCALE" =~ ^0+([.]0+)?$ ]] ||
+   ! [[ "$ORDER_INFLUENCE_MIN_EFFECT" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "invalid influence JS scale or floor" >&2; exit 2
+fi
 if [[ "$AGENT_ORDER_MODE" == "learned" || "$AGENT_ORDER_MODE" == "dependency" || "$AGENT_ORDER_MODE" == "dependency_prefix" ]]; then
   if [[ "$STORE_AGENT_ORDERS" != "1" ]]; then
     echo "learned ordering requires STORE_AGENT_ORDERS=1 for PPO replay" >&2
@@ -194,6 +225,14 @@ if [[ "$AGENT_ORDER_MODE" == "learned" || "$AGENT_ORDER_MODE" == "dependency" ||
   if [[ "$AGENT_ORDER_MODE" == "dependency" || "$AGENT_ORDER_MODE" == "dependency_prefix" ]]; then
     if [[ "$AGENT_ORDER_MODE" == "dependency_prefix" ]]; then
       args+=(--order_prefix_scale "$ORDER_PREFIX_SCALE")
+      args+=(--order_attention_scale_max "$ORDER_ATTENTION_SCALE_MAX")
+      args+=(--order_influence_align_coef "$ORDER_INFLUENCE_ALIGN_COEF")
+      args+=(--order_influence_max_alternatives "$ORDER_INFLUENCE_MAX_ALTERNATIVES")
+      args+=(--order_influence_effect_scale "$ORDER_INFLUENCE_EFFECT_SCALE")
+      args+=(--order_influence_min_effect "$ORDER_INFLUENCE_MIN_EFFECT")
+      if [[ "$ADAPTIVE_ORDER_ATTENTION_BIAS" == "1" ]]; then
+        args+=(--adaptive_order_attention_bias)
+      fi
     fi
     args+=(--order_pair_rank "$ORDER_PAIR_RANK")
     args+=(--order_graph_scale "$ORDER_GRAPH_SCALE")

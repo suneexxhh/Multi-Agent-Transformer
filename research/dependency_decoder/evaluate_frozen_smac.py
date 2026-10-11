@@ -122,7 +122,7 @@ def evaluate_frozen_checkpoint(checkpoint, map_name="3m", seed=1,
                 training_source_sha=(manifest["training_source_sha"] if manifest else None),
                 checkpoint_sha256=digest.hexdigest(),
                 effective_order_attention_bias=(
-                    agent_order_mode == "dependency" and
+                    agent_order_mode in ("dependency", "dependency_prefix") and
                     not args.disable_order_attention_bias),
                 deterministic=True, evaluation_episodes=n_eval_episodes,
                 wins=wins, win_rate=rate, device=str(device),

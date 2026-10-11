@@ -44,6 +44,20 @@ class MATTrainer:
         self.dec_actor = args.dec_actor
         self.learned_orders = getattr(args, "agent_order_mode", "identity") in ("learned", "dependency", "dependency_prefix")
         self.order_loss_coef = getattr(args, "order_loss_coef", 0.1)
+        self.order_influence_align_coef = float(getattr(args, "order_influence_align_coef", 0.0))
+        self.order_influence_max_alternatives = getattr(args, "order_influence_max_alternatives", 2)
+        self.order_influence_effect_scale = float(getattr(args, "order_influence_effect_scale", 1e-5))
+        self.order_influence_min_effect = float(getattr(args, "order_influence_min_effect", 1e-7))
+        if self.order_influence_align_coef < 0 or not np.isfinite(self.order_influence_align_coef):
+            raise ValueError("order_influence_align_coef must be finite and nonnegative")
+        if self.order_influence_align_coef and getattr(args, "agent_order_mode", None) != "dependency_prefix":
+            raise ValueError("influence alignment requires dependency_prefix")
+        if not isinstance(self.order_influence_max_alternatives, int) or self.order_influence_max_alternatives < 1:
+            raise ValueError("order_influence_max_alternatives must be positive")
+        if (not np.isfinite(self.order_influence_effect_scale) or self.order_influence_effect_scale <= 0 or
+                not np.isfinite(self.order_influence_min_effect) or self.order_influence_min_effect < 0):
+            raise ValueError("invalid influence effect scale or floor")
+        self._influence_teacher = None
         if self.learned_orders and self.order_loss_coef <= 0:
             raise ValueError("learned-order PPO requires positive order_loss_coef")
         
@@ -167,6 +181,9 @@ class MATTrainer:
 
         loss = policy_loss - dist_entropy * self.entropy_coef + value_loss * self.value_loss_coef
         self.last_order_policy_loss = None
+        self.last_order_influence_loss = 0.0
+        self.last_order_influence_valid_pairs = 0.0
+        self.last_order_influence_supervised_pairs = 0.0
         if self.learned_orders:
             old_order_logp = check(old_order_logp).to(**self.tpdv)
             if (not torch.isfinite(old_order_logp).all() or
@@ -207,10 +224,45 @@ class MATTrainer:
             loss = loss + self.order_loss_coef * order_loss
             self.last_order_policy_loss = order_loss.detach().item()
 
+        if self.order_influence_align_coef:
+            from mat.algorithms.mat.algorithm.influence_alignment import (
+                frozen_bias_off_teacher, conditional_action_js, alignment_targets,
+                influence_alignment_loss)
+            if stored_agent_orders is None or available_actions_batch is None:
+                raise ValueError("influence alignment needs PPO rollout order and legal actions")
+            if self._influence_teacher is None:
+                self._influence_teacher = frozen_bias_off_teacher(self.policy.transformer)
+            order = check(stored_agent_orders).to(device=self.device, dtype=torch.long)
+            obs = check(obs_batch).to(**self.tpdv).reshape(-1, self.num_agents,
+                                                          self.policy.transformer.encoder.obs_dim)
+            actions = check(actions_batch).to(device=self.device, dtype=torch.long).reshape(
+                -1, self.num_agents, 1)
+            legal = check(available_actions_batch).to(device=self.device).reshape(
+                -1, self.num_agents, self.policy.transformer.action_dim)
+            js, valid, entropy, alt_count = conditional_action_js(
+                self._influence_teacher, obs, actions, legal, order,
+                max_alternatives=self.order_influence_max_alternatives)
+            from mat.algorithms.mat.algorithm.agent_ordering import reorder_agents
+            targets, confidence = alignment_targets(
+                js, valid, entropy, alt_count, reorder_agents(legal, order).sum(-1),
+                max_alternatives=self.order_influence_max_alternatives,
+                effect_scale=self.order_influence_effect_scale,
+                min_effect=self.order_influence_min_effect)
+            influence_loss = influence_alignment_loss(
+                self.policy.transformer.order_policy, obs, order, targets, confidence)
+            loss = loss + self.order_influence_align_coef * influence_loss
+            self.last_order_influence_loss = influence_loss.detach().item()
+            self.last_order_influence_valid_pairs = valid.sum().item()
+            self.last_order_influence_supervised_pairs = (confidence > 0).sum().item()
+
         if not torch.isfinite(loss):
             raise ValueError("non-finite PPO total loss; optimizer not updated")
         self.policy.optimizer.zero_grad()
         loss.backward()
+        scale_param = getattr(getattr(self.policy.transformer, "order_policy", None),
+                              "raw_attention_scale", None)
+        self.last_attention_scale_grad = (scale_param.grad.detach().abs().item()
+                                          if scale_param is not None and scale_param.grad is not None else 0.0)
 
         if self._use_max_grad_norm:
             grad_norm = nn.utils.clip_grad_norm_(self.policy.transformer.parameters(), self.max_grad_norm)
@@ -218,6 +270,8 @@ class MATTrainer:
             grad_norm = get_gard_norm(self.policy.transformer.parameters())
 
         self.policy.optimizer.step()
+        self.last_attention_scale = (self.policy.transformer.order_policy.attention_scale().detach().item()
+                                     if scale_param is not None else 0.0)
 
         return value_loss, grad_norm, policy_loss, dist_entropy, grad_norm, imp_weights
 
@@ -229,6 +283,9 @@ class MATTrainer:
 
         :return train_info: (dict) contains information regarding training update (e.g. loss, grad norms, etc).
         """
+        # Each PPO update sees one pre-update frozen teacher snapshot. Never
+        # construct a teacher from evaluation episodes or refresh per epoch.
+        self._influence_teacher = None
         advantages_copy = buffer.advantages.copy()
         advantages_copy[buffer.active_masks[:-1] == 0.0] = np.nan
         mean_advantages = np.nanmean(advantages_copy)
@@ -251,6 +308,14 @@ class MATTrainer:
             train_info['order_clip_fraction'] = 0
             train_info['order_old_surprisal'] = 0
             train_info['order_mean_log_ratio'] = 0
+        if self.order_influence_align_coef:
+            for name in ("order_influence_loss", "order_influence_valid_pairs",
+                         "order_influence_supervised_pairs"):
+                train_info[name] = 0
+        if getattr(getattr(self.policy.transformer, "order_policy", None),
+                   "raw_attention_scale", None) is not None:
+            train_info['order_attention_scale'] = 0
+            train_info['order_attention_scale_grad'] = 0
 
         for _ in range(self.ppo_epoch):
             data_generator = buffer.feed_forward_generator_transformer(advantages, self.num_mini_batch)
@@ -274,11 +339,19 @@ class MATTrainer:
                     train_info['order_clip_fraction'] += self.last_order_clip_fraction
                     train_info['order_old_surprisal'] += self.last_order_old_surprisal
                     train_info['order_mean_log_ratio'] += self.last_order_mean_log_ratio
+                if self.order_influence_align_coef:
+                    train_info['order_influence_loss'] += self.last_order_influence_loss
+                    train_info['order_influence_valid_pairs'] += self.last_order_influence_valid_pairs
+                    train_info['order_influence_supervised_pairs'] += self.last_order_influence_supervised_pairs
+                if 'order_attention_scale' in train_info:
+                    train_info['order_attention_scale'] += self.last_attention_scale
+                    train_info['order_attention_scale_grad'] += self.last_attention_scale_grad
 
         num_updates = self.ppo_epoch * self.num_mini_batch
 
         for k in train_info.keys():
             train_info[k] /= num_updates
+        self._influence_teacher = None
  
         return train_info
 
