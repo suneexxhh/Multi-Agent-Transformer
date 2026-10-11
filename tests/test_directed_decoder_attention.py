@@ -1,5 +1,6 @@
 """CPU-only test of learned relation bias in MAT's causal action decoder."""
 import unittest
+from unittest.mock import patch
 import numpy as np
 import torch
 from torch.nn import functional as F
@@ -54,6 +55,53 @@ class TestDirectedDecoderAttention(unittest.TestCase):
         modified[:,3,1:]=F.one_hot(torch.tensor([3,0]),4).float()
         logits_b=self.net.decoder(modified,self.rep,self.obs,attention_bias=bias)
         self.assertTrue(torch.allclose(logits_a[:,:3], logits_b[:,:3],atol=2e-6))
+
+    def test_nobias_never_calls_relation_attention_in_rollout_or_replay(self):
+        # Regression: before this fix, get_actions always inserted the bias
+        # despite forward() disabling it. That invalidated the NoBias ablation.
+        torch.manual_seed(990)
+        net = MultiAgentTransformer(
+            9, 7, 4, 4, n_block=2, n_embd=16, n_head=1,
+            agent_order_mode="dependency", order_pair_rank=8,
+            order_attention_bias=False)
+        obs = self.obs.numpy().astype(np.float32)
+        cent = np.zeros((2, 4, 9), dtype=np.float32)
+        available = np.ones((2, 4, 4), dtype=np.float32)
+        with patch.object(net.order_policy, "conditioning_bias",
+                          side_effect=AssertionError("NoBias used relation attention")):
+            with torch.no_grad():
+                action, rollout_lp, values, order, order_lp = net.get_actions(
+                    cent, obs, available, deterministic=False,
+                    return_agent_order=True, return_order_log_prob=True)
+                replay_lp, values2, _, order_lp2 = net(
+                    cent, obs, action, available, agent_order=order,
+                    return_order_log_prob=True)
+        self.assertTrue(torch.allclose(rollout_lp, replay_lp, atol=2e-5))
+        self.assertTrue(torch.allclose(order_lp, order_lp2, atol=2e-6))
+        self.assertTrue(torch.allclose(values, values2, atol=2e-5))
+
+    def test_bias_gate_has_effect_on_both_rollout_and_replay(self):
+        # If the relation bias is switched on, it must be consulted by the
+        # same model's sampling and teacher-forced replay paths.
+        torch.manual_seed(991)
+        net = MultiAgentTransformer(
+            9, 7, 4, 4, n_block=2, n_embd=16, n_head=1,
+            agent_order_mode="dependency", order_pair_rank=8,
+            order_attention_bias=True)
+        obs = self.obs.numpy().astype(np.float32)
+        cent = np.zeros((2, 4, 9), dtype=np.float32)
+        available = np.ones((2, 4, 4), dtype=np.float32)
+        with patch.object(net.order_policy, "conditioning_bias",
+                          wraps=net.order_policy.conditioning_bias) as spy:
+            with torch.no_grad():
+                action, rollout_lp, _, order, _ = net.get_actions(
+                    cent, obs, available, return_agent_order=True,
+                    return_order_log_prob=True)
+                replay_lp, _, _, _ = net(
+                    cent, obs, action, available, agent_order=order,
+                    return_order_log_prob=True)
+        self.assertEqual(spy.call_count, 2)
+        self.assertTrue(torch.allclose(rollout_lp, replay_lp, atol=2e-5))
 
     def test_full_sampling_matches_parallel_log_prob(self):
         obs=self.obs.numpy().astype(np.float32)
