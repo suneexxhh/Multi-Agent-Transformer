@@ -27,11 +27,19 @@ class PrefixDependencyOrder(DirectedDependencyOrder):
     """Learned prefix-dependent permutation policy with exact replay logprob."""
 
     def __init__(self, obs_dim, hidden_dim=64, temperature=1.0,
-                 pair_rank=16, graph_scale=0.5, prefix_scale=1.0):
+                 pair_rank=16, graph_scale=0.5, prefix_scale=1.0,
+                 adaptive_attention_bias=False, attention_scale_max=2.0):
         super().__init__(obs_dim, hidden_dim, temperature, pair_rank, graph_scale)
         if not math.isfinite(prefix_scale) or prefix_scale <= 0.0:
             raise ValueError("prefix_scale must be finite and strictly positive")
         self.prefix_scale = float(prefix_scale)
+        if not math.isfinite(attention_scale_max) or attention_scale_max <= 0:
+            raise ValueError("attention_scale_max must be finite and positive")
+        self.adaptive_attention_bias = bool(adaptive_attention_bias)
+        self.attention_scale_max = float(attention_scale_max)
+        if self.adaptive_attention_bias:
+            # Zero exactly recovers the original MAT conditional decoder.
+            self.raw_attention_scale = nn.Parameter(torch.zeros(()))
         self.demand_query = nn.Linear(hidden_dim, pair_rank, bias=False)
         self.demand_key = nn.Linear(hidden_dim, pair_rank, bias=False)
 
@@ -137,4 +145,13 @@ class PrefixDependencyOrder(DirectedDependencyOrder):
         batch, agents, _ = ordered.shape
         prior = math.log(2.) + F.logsigmoid(ordered[:, :, :-1].clamp(-8., 8.))
         bos = ordered.new_zeros(batch, agents, 1)
-        return torch.cat((bos, prior), dim=-1)
+        bias = torch.cat((bos, prior), dim=-1)
+        if self.adaptive_attention_bias:
+            bias = self.attention_scale_max * torch.tanh(self.raw_attention_scale) * bias
+        return bias
+
+    def attention_scale(self):
+        """Effective bounded gain; the legacy V3 fixed-bias path is one."""
+        if not self.adaptive_attention_bias:
+            return 1.0
+        return self.attention_scale_max * torch.tanh(self.raw_attention_scale)

@@ -44,6 +44,8 @@ class SelfAttention(nn.Module):
                              .view(1, 1, n_agent + 1, n_agent + 1))
 
         self.att_bp = None
+        self.capture_attention = False
+        self.last_attention = None
 
     def forward(self, key, value, query, attention_bias=None):
         B, L, D = query.size()
@@ -69,6 +71,8 @@ class SelfAttention(nn.Module):
         if self.masked:
             att = att.masked_fill(self.mask[:, :, :L, :L] == 0, float('-inf'))
         att = F.softmax(att, dim=-1)
+        if self.capture_attention:
+            self.last_attention = att.detach()
 
         y = att @ v  # (B, nh, L, L) x (B, nh, L, hs) -> (B, nh, L, hs)
         y = y.transpose(1, 2).contiguous().view(B, L, D)  # re-assemble all head outputs side by side
@@ -246,7 +250,8 @@ class MultiAgentTransformer(nn.Module):
                  agent_order_mode='identity', agent_order_seed=1,
                  order_hidden_dim=64, order_temperature=1.0,
                  order_pair_rank=16, order_graph_scale=0.5,
-                 order_attention_bias=True, order_prefix_scale=1.0):
+                 order_attention_bias=True, order_prefix_scale=1.0,
+                 adaptive_order_attention_bias=False, order_attention_scale_max=2.0):
         super(MultiAgentTransformer, self).__init__()
 
         self.n_agent = n_agent
@@ -257,6 +262,9 @@ class MultiAgentTransformer(nn.Module):
         self.agent_order_mode = agent_order_mode
         self.agent_order_seed = agent_order_seed
         self.order_attention_bias = bool(order_attention_bias)
+        if adaptive_order_attention_bias and (agent_order_mode != 'dependency_prefix' or
+                                              not order_attention_bias):
+            raise ValueError("adaptive attention requires enabled dependency_prefix bias")
         if dec_actor and agent_order_mode != 'identity':
             raise ValueError("Agent ordering supports original MAT Transformer Decoder, not dec_actor.")
 
@@ -280,7 +288,9 @@ class MultiAgentTransformer(nn.Module):
                 self.order_policy = PrefixDependencyOrder(
                     obs_dim, order_hidden_dim, order_temperature,
                     pair_rank=order_pair_rank, graph_scale=order_graph_scale,
-                    prefix_scale=order_prefix_scale)
+                    prefix_scale=order_prefix_scale,
+                    adaptive_attention_bias=adaptive_order_attention_bias,
+                    attention_scale_max=order_attention_scale_max)
             else:
                 self.order_policy = None
         self.to(device)

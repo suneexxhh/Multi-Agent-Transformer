@@ -40,6 +40,29 @@ class TestPrefixDependencyLauncher(unittest.TestCase):
         self.assertIn("--disable_order_attention_bias", result.stdout)
         self.assertIn("--order_prefix_scale 0.8", result.stdout)
 
+    def test_v31_independent_switches_and_invalid_combinations(self):
+        aligned_no_bias = dry(DISABLE_ORDER_ATTENTION_BIAS="1",
+                              ORDER_INFLUENCE_ALIGN_COEF="0.2")
+        self.assertEqual(aligned_no_bias.returncode, 0, aligned_no_bias.stderr)
+        self.assertIn("--order_influence_align_coef 0.2", aligned_no_bias.stdout)
+        self.assertIn("--disable_order_attention_bias", aligned_no_bias.stdout)
+        self.assertNotIn("--adaptive_order_attention_bias", aligned_no_bias.stdout)
+        full = dry(ADAPTIVE_ORDER_ATTENTION_BIAS="1",
+                   ORDER_INFLUENCE_ALIGN_COEF="0.2",
+                   ORDER_ATTENTION_SCALE_MAX="1.5",
+                   ORDER_INFLUENCE_MAX_ALTERNATIVES="3")
+        self.assertEqual(full.returncode, 0, full.stderr)
+        for flag in ("--adaptive_order_attention_bias", "--order_attention_scale_max 1.5",
+                     "--order_influence_align_coef 0.2",
+                     "--order_influence_max_alternatives 3"):
+            self.assertIn(flag, full.stdout)
+        invalid = dry(ADAPTIVE_ORDER_ATTENTION_BIAS="1",
+                      DISABLE_ORDER_ATTENTION_BIAS="1")
+        self.assertNotEqual(invalid.returncode, 0)
+        self.assertIn("adaptive bias requires", invalid.stderr)
+        invalid = dry(ORDER_INFLUENCE_MAX_ALTERNATIVES="0")
+        self.assertNotEqual(invalid.returncode, 0)
+
     def test_reject_unapproved_maps_and_missing_saved_orders(self):
         for name in ("3m", "corridor", "bogus"):
             with self.subTest(map=name):

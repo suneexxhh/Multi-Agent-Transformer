@@ -310,6 +310,14 @@ def get_config():
                         help="Prefix-satisfied directed demand gain; dependency_prefix only")
     parser.add_argument("--disable_order_attention_bias", action="store_true", default=False,
                         help="Ablation: retain directed ordering but disable relation-conditioned MAT attention")
+    parser.add_argument("--adaptive_order_attention_bias", action="store_true", default=False,
+                        help="V3.1: bounded learnable demand bias gain, initialized at zero")
+    parser.add_argument("--order_attention_scale_max", type=float, default=2.0,
+                        help="V3.1 maximum absolute learnable attention gain")
+    parser.add_argument("--order_influence_align_coef", type=float, default=0.0,
+                        help="V3.1 optional frozen Bias-OFF policy influence alignment weight")
+    parser.add_argument("--order_influence_max_alternatives", type=int, default=2,
+                        help="Maximum legal counterfactual action IDs per source and state")
     parser.add_argument("--order_loss_coef", type=float, default=0.1,
                         help="Learned-order PPO loss weight (pilot; factor-wise clipping)")
     parser.add_argument("--store_agent_orders", action="store_true", default=False,
