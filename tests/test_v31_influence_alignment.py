@@ -235,9 +235,11 @@ class TestV31Model(unittest.TestCase):
         self.assertTrue(torch.equal(bias[:, :, 0], torch.zeros_like(bias[:, :, 0])))
         logits = model.order_policy.demand_logits(obs)
         target, source = self.order[0, 2].item(), self.order[0, 0].item()
-        expected = model.order_policy.attention_scale() * (
-            math.log(2.) + torch.nn.functional.logsigmoid(logits[0, target, source].clamp(-8., 8.)))
+        raw_prior = math.log(2.) + torch.nn.functional.logsigmoid(
+            logits[0, target, source].clamp(-8., 8.))
+        expected = model.order_policy.attention_scale() * 2. * torch.tanh(raw_prior / 2.)
         self.assertTrue(torch.allclose(bias[0, 2, 1], expected))
+        self.assertLess(bias.abs().max().item(), 4.)
         model.zero_grad()
         bias[0, 2, 1].backward()
         self.assertGreater(abs(model.order_policy.raw_attention_scale.grad.item()), 0.)

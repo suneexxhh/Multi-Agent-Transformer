@@ -74,10 +74,11 @@ L_{\mathrm{align}}=\frac{\sum_{b,t,s}w_{b,t,s}\,
 
 \[
 \beta=\beta_{\max}\tanh(\rho),\quad \rho_0=0,\quad \beta_{\max}=2;
-\qquad B_{t,s+1}=\beta\,[\ln 2+\log\sigma(\operatorname{clip}(d_{\sigma_t\leftarrow\sigma_s},-8,8))].
+\qquad r_{t,s}=\ln 2+\log\sigma(\operatorname{clip}(d_{\sigma_t\leftarrow\sigma_s},-8,8)),
+\quad B_{t,s+1}=2\beta\tanh(r_{t,s}/2).
 \]
 
-BOS 列为零，未来槽仍被原 MAT 因果遮罩屏蔽。\(\beta_0=0\) 使**相同排列、相同主干权重**下的条件 Decoder 与原 MAT 完全一致；NoBias 消融则完全不计算 bias。增益可以为正或负，绝对值严格小于 2；负号可检验是否学到与当前关系定义相反的融合方向。`attention_scale` 与 `attention_scale_grad` 纳入 PPO 日志；`SelfAttention.capture_attention` 可选地提取 detached 注意力矩阵用于 CPU 诊断，默认关闭，训练时无额外存储。
+BOS 列为零，未来槽仍被原 MAT 因果遮罩屏蔽。\(\beta_0=0\) 使**相同排列、相同主干权重**下的条件 Decoder 与原 MAT 完全一致；NoBias 消融则完全不计算 bias。增益可以为正或负，绝对值严格小于 2；平滑 `tanh` 使每个偏置绝对值严格小于 4，并在大偏置区保留非零梯度。负号可检验是否学到与当前关系定义相反的融合方向。原 V3 **固定偏置路径不做此变换**，以保持有效对照。`attention_scale` 与 `attention_scale_grad` 纳入 PPO 日志；`SelfAttention.capture_attention` 可选地提取 detached 注意力矩阵用于 CPU 诊断，默认关闭，训练时无额外存储。
 
 联合目标仍是现有 MAT 动作 PPO、价值损失、策略熵与排列 PPO；仅在开关开启时增加 \(c_{align}L_{align}\)。教师不经过反向传播；学生的 demand 参数可从排列 PPO、注意力动作 PPO 和对齐 BCE 收梯度。零增益初始化时，注意力动作梯度先到 \(\rho\)，对 demand 的注意力梯度初始为零，随后才打开；demand 仍可由排列及对齐损失更新。
 

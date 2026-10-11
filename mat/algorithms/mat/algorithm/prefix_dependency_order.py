@@ -147,7 +147,10 @@ class PrefixDependencyOrder(DirectedDependencyOrder):
         bos = ordered.new_zeros(batch, agents, 1)
         bias = torch.cat((bos, prior), dim=-1)
         if self.adaptive_attention_bias:
-            bias = self.attention_scale_max * torch.tanh(self.raw_attention_scale) * bias
+            # A smooth cap prevents near-zero demand from overwhelming QK
+            # logits, without erasing the demand gradient at the cap.
+            bounded = 2.0 * torch.tanh(bias / 2.0)
+            bias = self.attention_scale_max * torch.tanh(self.raw_attention_scale) * bounded
         return bias
 
     def attention_scale(self):
