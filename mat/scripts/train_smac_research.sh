@@ -147,7 +147,8 @@ if [[ ! "$SEED" =~ ^[0-9]+$ ]]; then
 fi
 STAMP="$(date +%Y%m%d_%H%M%S_%N)"
 EXP_NAME="${EXP_TAG}_${AGENT_ORDER_MODE}_orderseed${AGENT_ORDER_SEED}_seed${SEED}"
-LOG_DIR="$SCRIPT_DIR/logs"
+LOG_DIR="${MAT_DECODER_LOG_DIR:-$SCRIPT_DIR/logs}"
+RESULTS_ROOT="${MAT_DECODER_RESULTS_ROOT:-}"
 LOG_FILE="$LOG_DIR/${LOG_METHOD_NAME}_seed${SEED}_${STAMP}.log"
 MAT_CONDA_ENV="${MAT_CONDA_ENV:-new_titans}"
 
@@ -177,6 +178,9 @@ if [[ "$USE_EVAL" == "1" ]]; then
 fi
 if [[ "$STORE_AGENT_ORDERS" == "1" ]]; then
   args+=(--store_agent_orders)
+fi
+if [[ -n "$RESULTS_ROOT" ]]; then
+  args+=(--run_dir "$RESULTS_ROOT")
 fi
 if [[ "$AGENT_ORDER_MODE" == "learned" || "$AGENT_ORDER_MODE" == "dependency" ]]; then
   args+=(--order_hidden_dim "$ORDER_HIDDEN_DIM")
@@ -235,6 +239,7 @@ run_training() {
   printf 'rollout_threads=%s training_threads=%s eval_threads=%s eval_episodes=%s use_eval=%s\n' \
     "$N_ROLLOUT_THREADS" "$N_TRAINING_THREADS" "$N_EVAL_ROLLOUT_THREADS" "$EVAL_EPISODES" "$USE_EVAL"
   printf 'repository_root=%s\nlog_file=%s\n' "$REPO_ROOT" "$LOG_FILE"
+  printf 'results_root=%s\n' "${RESULTS_ROOT:-default_repo_results}"
   printf 'command: CUDA_VISIBLE_DEVICES=%q %q -u train/train_smac.py ' "$GPU_ID" "$PYTHON_BIN"
   printf '%q ' "${args[@]}"
   printf '\n'
