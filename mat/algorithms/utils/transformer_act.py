@@ -3,6 +3,13 @@ from torch.distributions import Categorical, Normal
 from torch.nn import functional as F
 
 
+def _decode_with_optional_relations(decoder, shifted_action, obs_rep, obs, attention_bias):
+    """Keep legacy MAT / diagnostic decoder APIs untouched unless enabled."""
+    if attention_bias is None:
+        return decoder(shifted_action, obs_rep, obs)
+    return decoder(shifted_action, obs_rep, obs, attention_bias=attention_bias)
+
+
 def discrete_autoregreesive_act(decoder, obs_rep, obs, batch_size, n_agent, action_dim, tpdv,
                                 available_actions=None, deterministic=False, attention_bias=None):
     shifted_action = torch.zeros((batch_size, n_agent, action_dim + 1)).to(**tpdv)
@@ -14,7 +21,8 @@ def discrete_autoregreesive_act(decoder, obs_rep, obs, batch_size, n_agent, acti
     output_action_log = torch.zeros_like(output_action, dtype=shifted_action.dtype)
 
     for i in range(n_agent):
-        logit = decoder(shifted_action, obs_rep, obs, attention_bias=attention_bias)[:, i, :]
+        logit = _decode_with_optional_relations(
+            decoder, shifted_action, obs_rep, obs, attention_bias)[:, i, :]
         if available_actions is not None:
             logit[available_actions[:, i, :] == 0] = -1e10
 
@@ -35,7 +43,8 @@ def discrete_parallel_act(decoder, obs_rep, obs, action, batch_size, n_agent, ac
     shifted_action = torch.zeros((batch_size, n_agent, action_dim + 1)).to(**tpdv)
     shifted_action[:, 0, 0] = 1
     shifted_action[:, 1:, 1:] = one_hot_action[:, :-1, :]
-    logit = decoder(shifted_action, obs_rep, obs, attention_bias=attention_bias)
+    logit = _decode_with_optional_relations(
+            decoder, shifted_action, obs_rep, obs, attention_bias)
     if available_actions is not None:
         logit[available_actions == 0] = -1e10
 
@@ -54,7 +63,8 @@ def continuous_autoregreesive_act(decoder, obs_rep, obs, batch_size, n_agent, ac
     output_action_log = torch.zeros_like(output_action)
 
     for i in range(n_agent):
-        act_mean = decoder(shifted_action, obs_rep, obs, attention_bias=attention_bias)[:, i, :]
+        act_mean = _decode_with_optional_relations(
+            decoder, shifted_action, obs_rep, obs, attention_bias)[:, i, :]
         action_std = torch.sigmoid(decoder.log_std) * 0.5
 
         # log_std = torch.zeros_like(act_mean).to(**tpdv) + decoder.log_std
@@ -79,7 +89,8 @@ def continuous_parallel_act(decoder, obs_rep, obs, action, batch_size, n_agent, 
     shifted_action = torch.zeros((batch_size, n_agent, action_dim)).to(**tpdv)
     shifted_action[:, 1:, :] = action[:, :-1, :]
 
-    act_mean = decoder(shifted_action, obs_rep, obs, attention_bias=attention_bias)
+    act_mean = _decode_with_optional_relations(
+            decoder, shifted_action, obs_rep, obs, attention_bias)
     action_std = torch.sigmoid(decoder.log_std) * 0.5
     distri = Normal(act_mean, action_std)
 
