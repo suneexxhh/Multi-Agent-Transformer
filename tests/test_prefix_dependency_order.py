@@ -2,6 +2,7 @@
 import itertools
 import math
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
@@ -11,6 +12,8 @@ from torch.nn import functional as F
 from mat.algorithms.mat.algorithm.directed_dependency_order import DirectedDependencyOrder
 from mat.algorithms.mat.algorithm.prefix_dependency_order import PrefixDependencyOrder
 from mat.algorithms.mat.algorithm.ma_transformer import MultiAgentTransformer
+from mat.algorithms.mat.algorithm.transformer_policy import TransformerPolicy
+from mat.algorithms.mat.mat_trainer import MATTrainer
 from mat.config import get_config
 from research.dependency_decoder.checkpoint_manifest import (
     build_training_manifest, evaluation_model_flags, load_training_manifest)
@@ -223,6 +226,64 @@ class TestPrefixMATIntegration(unittest.TestCase):
             self.assertTrue(torch.equal(param, new.state_dict()[name]), name)
         with self.assertRaises(RuntimeError):
             identity.load_state_dict(new.state_dict(), strict=True)
+
+    def test_actual_mat_ppo_update_replays_prefix_policy(self):
+        # Synthetic PPO update, including old joint permutation likelihood.
+        torch.manual_seed(633)
+        policy = TransformerPolicy.__new__(TransformerPolicy)
+        policy.algorithm_name = "mat"
+        policy.num_agents = 3
+        policy.share_obs_dim = 9
+        policy.obs_dim = 7
+        policy.act_dim = 4
+        policy.act_num = 1
+        policy._use_policy_active_masks = False
+        policy.tpdv = dict(dtype=torch.float32, device=torch.device("cpu"))
+        policy.transformer = MultiAgentTransformer(
+            9, 7, 4, 3, 1, 16, 1, agent_order_mode="dependency_prefix",
+            order_pair_rank=8, order_prefix_scale=1.0)
+        policy.optimizer = torch.optim.Adam(policy.transformer.parameters(), lr=.005)
+        rng = np.random.RandomState(632)
+        obs = rng.randn(2, 3, 7).astype(np.float32)
+        cent = np.zeros((2, 3, 9), dtype=np.float32)
+        ava = np.ones((2, 3, 4), dtype=np.float32)
+        zeros = np.zeros((6, 1), dtype=np.float32)
+        with torch.no_grad():
+            values, actions, old_act_lp, _, _, old_order, old_perm_lp = policy.get_actions(
+                cent.reshape(-1, 9), obs.reshape(-1, 7), zeros, zeros,
+                zeros, ava.reshape(-1, 4), return_agent_order=True,
+                return_order_log_prob=True)
+            v2, act2, _, perm2 = policy.evaluate_actions(
+                cent.reshape(-1, 9), obs.reshape(-1, 7), zeros, zeros,
+                actions, zeros, ava.reshape(-1, 4),
+                agent_order=old_order, return_order_log_prob=True)
+        self.assertTrue(torch.allclose(values, v2, atol=2e-5))
+        self.assertTrue(torch.allclose(old_act_lp, act2, atol=2e-5))
+        self.assertTrue(torch.allclose(old_perm_lp, perm2, atol=1e-6))
+        args = SimpleNamespace(
+            clip_param=.2, ppo_epoch=1, num_mini_batch=1, data_chunk_length=1,
+            value_loss_coef=1., entropy_coef=.01, max_grad_norm=10,
+            huber_delta=10, use_recurrent_policy=False,
+            use_naive_recurrent_policy=False, use_max_grad_norm=True,
+            use_clipped_value_loss=False, use_huber_loss=False,
+            use_valuenorm=False, use_value_active_masks=False,
+            use_policy_active_masks=False, dec_actor=False,
+            agent_order_mode="dependency_prefix", order_loss_coef=.5)
+        trainer = MATTrainer(args, policy, 3)
+        sample = (cent.reshape(-1, 9), obs.reshape(-1, 7), zeros, zeros,
+                  actions.detach().numpy(), values.detach().numpy(),
+                  (values.detach() + .25).numpy(), zeros, np.ones_like(zeros),
+                  old_act_lp.detach().numpy(),
+                  np.array([[1.], [1.], [1.], [-1.], [-1.], [-1.]],
+                           dtype=np.float32),
+                  ava.reshape(-1, 4), old_order.detach().numpy(),
+                  old_perm_lp.detach().numpy())
+        trainer.ppo_update(sample)
+        self.assertTrue(np.isfinite(trainer.last_order_policy_loss))
+        self.assertTrue(np.isfinite(trainer.last_order_approx_kl))
+        self.assertEqual(trainer.last_order_log_ratio_clamp_fraction, 0)
+        self.assertGreater(
+            policy.transformer.order_policy.demand_query.weight.grad.abs().sum().item(), 0)
 
     def test_manifest_roundtrip_prefix_mode(self):
         args = get_config().parse_args([])
