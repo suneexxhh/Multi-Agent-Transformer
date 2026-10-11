@@ -40,6 +40,15 @@ class TestDirectedDependencyLauncher(unittest.TestCase):
                 self.assertNotEqual(proc.returncode,0)
                 self.assertIn("outside the nine approved maps",proc.stderr)
 
+    def test_results_root_and_log_dir_can_be_external(self):
+        proc = run_dry("3s5z",
+                       MAT_DECODER_RESULTS_ROOT="/tmp/mat-decoder-persistent-runs",
+                       MAT_DECODER_LOG_DIR="/tmp/mat-decoder-persistent-logs")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("--run_dir /tmp/mat-decoder-persistent-runs", proc.stdout)
+        self.assertIn("results_root=/tmp/mat-decoder-persistent-runs", proc.stdout)
+        self.assertIn("log_file=/tmp/mat-decoder-persistent-logs/", proc.stdout)
+
     def test_missing_saved_order_refused(self):
         proc=run_dry("3s5z",STORE_AGENT_ORDERS="0")
         self.assertNotEqual(proc.returncode,0)
