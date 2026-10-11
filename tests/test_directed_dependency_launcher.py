@@ -49,6 +49,18 @@ class TestDirectedDependencyLauncher(unittest.TestCase):
         self.assertIn("results_root=/tmp/mat-decoder-persistent-runs", proc.stdout)
         self.assertIn("log_file=/tmp/mat-decoder-persistent-logs/", proc.stdout)
 
+    def test_attention_off_and_checkpoint_update_interval(self):
+        proc = run_dry("3s5z", DISABLE_ORDER_ATTENTION_BIAS="1",
+                       SAVE_INTERVAL_UPDATES="500")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("--disable_order_attention_bias", proc.stdout)
+        self.assertIn("--save_interval 500", proc.stdout)
+        self.assertIn("save_interval_updates=500", proc.stdout)
+
+    def test_bad_checkpoint_update_interval_fails_closed(self):
+        proc = run_dry("3s5z", SAVE_INTERVAL_UPDATES="0")
+        self.assertNotEqual(proc.returncode, 0)
+
     def test_missing_saved_order_refused(self):
         proc=run_dry("3s5z",STORE_AGENT_ORDERS="0")
         self.assertNotEqual(proc.returncode,0)
